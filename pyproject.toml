@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentrelay-local"
+version = "0.1.0"
+description = "Local-first ticket coordination, durable handoffs and evidence-based delivery for AI agents."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp==1.30.0"]
+
+[project.scripts]
+agentrelay = "agentrelay.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["agentrelay*"]
+
+[tool.setuptools.package-data]
+agentrelay = ["static/*"]
+
+[tool.setuptools.data-files]
+"share/agentrelay/skills/agentrelay-work" = ["skills/agentrelay-work/SKILL.md"]

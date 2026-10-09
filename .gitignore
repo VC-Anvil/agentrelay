@@ -1,0 +1,15 @@
+.venv/
+.runtime/
+.cache/
+.agentrelay/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.env
+*.sqlite*
+*.db*
+*.log
+test-results/
