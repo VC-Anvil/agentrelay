@@ -6,7 +6,7 @@
 
 Turn goals into prioritized tickets, share durable context between agents, and keep delivery separate from acceptance. Humans use the web board; agents use the MCP server. Both operate on the same SQLite database.
 
-AgentRelay 0.7 combines a persistent ticket board, an MCP server and optional worker execution. Agents find work through filtered summaries and open current context with recent history; older audit events remain available by cursor. Register multiple local projects, import complete plans without duplicates, capture exact review inputs and detect when those inputs change. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
+AgentRelay 0.7.1 combines a persistent ticket board, an MCP server and optional worker execution. Agents find work through filtered summaries and open current context with recent history; older audit events remain available by cursor. Register multiple local projects, import complete plans without duplicates, capture exact review inputs and detect when those inputs change. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
 
 ![AgentRelay local board with explicitly fictional demo data](docs/preview.jpg)
 
@@ -118,7 +118,11 @@ history. No audit events are deleted. [History and cursor examples](docs/HISTORY
 5. The worker resumes with the shared context, then submits artifacts for review.
 6. A different identity checks every criterion and closes the ticket. Parent goals still need their own integrated review.
 
-Creating a ticket does not start a process. Urgency orders pending work but does not preempt an active agent. Evidence links are recorded references, not automatically verified artifacts.
+Creating a ticket does not start a process. Urgency orders pending work but does not preempt an active agent. Help inherits its parent's priority when created; later priority changes remain explicit on each ticket. Evidence links are recorded references, not automatically verified artifacts.
+
+Workers can add acceptance criteria as they discover necessary checks. Existing
+criteria remain required while work is in progress, awaiting review, or blocked
+with an assigned owner. Every scope update records the previous and new values.
 
 ## Tests and architecture
 

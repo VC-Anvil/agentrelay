@@ -526,15 +526,17 @@ class Store:
         self._expect(row, data)
         if row["status"] == "done":
             raise DomainError("reopen completed ticket before editing scope", 409)
-        if row["status"] in ("in_progress", "review") or (row["status"] == "blocked" and row["assignee"]):
+        owned_work = row["status"] in ("in_progress", "review") or (
+            row["status"] == "blocked" and row["assignee"])
+        if owned_work:
             self._actor_can_work(row, actor)
         before = self._ticket(db, row["id"])
         fields = self._normalize_ticket_fields(db, {k: v for k, v in data.items() if k not in ("id", "expected_revision")})
         if not fields:
             raise DomainError("no fields to update")
-        if "acceptance" in fields and row["status"] in ("in_progress", "review"):
-            before = set(json.loads(row["acceptance"]))
-            if not before.issubset(fields["acceptance"]):
+        if "acceptance" in fields and owned_work:
+            prior_criteria = set(json.loads(row["acceptance"]))
+            if not prior_criteria.issubset(fields["acceptance"]):
                 raise DomainError("acceptance cannot be weakened while active", 409)
         deps = fields.pop("depends_on", None)
         if deps is not None:
@@ -656,6 +658,7 @@ class Store:
         profile_id = _optional_text(data.get("profile_id"), "profile_id")
         self._require_profile(db, profile_id)
         child = self._insert_ticket(db, {"title": title, "description": description, "type": "help",
+                                         "priority": row["priority"],
                                          "parent_id": row["id"], "profile_id": profile_id,
                                          "acceptance": ["La ayuda solicitada está documentada y revisada."]},
                                     actor, "create_help")

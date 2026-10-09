@@ -1,61 +1,61 @@
-# Validation — AgentRelay 0.7.0
+# Validation — AgentRelay 0.7.1
 
 Date: 2026-10-10 (Europe/Madrid). Windows, Python 3.12.14, MCP SDK 1.30.0.
-Earlier evidence: [v0.6 audit cursors](VALIDATION_0_6.md),
-[v0.5 context and skill](VALIDATION_0_5.md),
-[v0.4 plans and freshness](VALIDATION_0_4.md),
-[v0.3 project pilots](VALIDATION_0_3.md).
+Previous release: [0.7 database and graph robustness](VALIDATION_0_7.md).
 
-## Defects reproduced before correction
+## Active work and help recovery
 
-A valid hierarchy of 2,500 tickets caused the recursive relationship validator
-to raise `RecursionError` when a public action tried to add another ticket.
-The transaction rolled back, but valid work could not be added. Iterative
-topological traversal now accepts this graph and still rejects mixed hierarchy
-and dependency cycles with a 409 domain error. A late cycle preserves revision,
-dependencies, ticket counter and audit records after rollback. Shared prerequisites
-are also covered. [Author report](deep-graph-report.md).
+Three defects were reproduced in isolated databases before correction:
 
-CLI `context`, `history`, `export` and `backup` used to initialize a database even
-when its path was a typo. They also changed unrelated SQLite files before trying
-to read them. A read-only preflight now checks an existing file, the five original
-tables and their required columns before Store initialization. The workspace
-registry shares that preflight. Tests reject empty/corrupt files, unrelated
-tables, matching table names with incompatible columns, and matching views,
-without changing input bytes or creating backup output. An original schema
-without later tables still migrates successfully. Explicit creation through
-`action` remains available. [Author report](readonly-cli-report.md).
+- An urgent task requested help, but the help entered the queue at normal priority.
+- Adding a legitimate acceptance criterion to an active ticket raised TypeError
+  during audit serialization. The transaction rolled back, preventing the update.
+- After requesting help, the assigned parent became blocked and could then have
+  its acceptance criteria reduced, bypassing the protection on active work.
+
+Help now inherits the current parent priority at creation, like split children.
+Later priority changes remain independent; no active owner is preempted. The
+explicit target profile, help dependency and independent review stay intact.
+[Priority report](help-priority-report.md).
+
+Acceptance can grow in progress, review, or blocked with an owner. Its previous
+and new values are recorded correctly without replacing the audit dictionary
+with a set. Existing criteria cannot be removed in those states. Planning in
+queued, backlog or unassigned blocked tasks retains scope-editing behavior.
+[Acceptance report](acceptance-update-report.md).
 
 ## Checks
 
-The complete suite ran **98 tests in 30.569 seconds: 96 passed, two skipped** for
-Windows symbolic-link privileges. Private log: `.agentrelay/v07-tests.log`.
-This includes real MCP SDK stdio, HTTP isolation, real configured fixture
-processes, CLI subprocesses and JavaScript race checks. No LLM provider was
-invoked by the test suite. Independent integration review caught the initial
-table-name-only validation gap before release.
+The full suite ran **104 tests in 31.526 seconds: 102 passed, two skipped** for
+Windows symbolic-link privileges. Private log: `.agentrelay/v071-tests.log`.
+Store tests cover queue order, later reprioritization, self-review rejection,
+independent completion, acceptance expansion in progress/review/blocked,
+correct audit values, conflict/ownership rejection and planning compatibility.
 
-The updated CLI queried the four existing documentary pilot databases for
-context, history and full export: **33 tickets**, with **34 audit events** on
-the four selected review tickets. All queries succeeded; ticket, profile and
-event contents were unchanged. This validates existing project records, not new
-game implementation. Private trace: `.agentrelay/v07-cli-pilots.json`.
+A real MCP SDK stdio client claimed an urgent task, added a required criterion,
+read its before/after audit, attempted a forbidden reduction, requested targeted
+help, attempted another reduction while blocked, and discovered the urgent help
+before other high-priority work through filtered ticket summaries. The test uses
+an explicit fixture model declaration and makes no LLM provider call.
 
-The wheel and source archive are checked against source bytes and an isolated
-wheel installation before publication. The [CI workflow history](https://github.com/VC-Anvil/agentrelay/actions/workflows/tests.yml)
-records the exact commit results; pending jobs are not counted as passing.
+An independent reviewer identified the blocked-owner acceptance gap during review
+of the MCP test; the integrator reproduced it before the additional correction.
+Specialist sandbox test setup limitations are recorded separately from the
+integrator's normal suite above.
+
+Distribution verification checks an isolated wheel install, packaged source and
+skill bytes, and source archive contents before publication. The
+[CI history](https://github.com/VC-Anvil/agentrelay/actions/workflows/tests.yml)
+records exact commit outcomes; pending runs do not count as passing.
 
 ## Limits
 
-The database preflight prevents accidental initialization of missing or
-unrecognized files. It does not authenticate hostile databases or eliminate a
-path-replacement race. Recognized AgentRelay files still receive Store schema
-migrations; these commands are not filesystem-level read-only sessions.
+Priority inheritance applies at help creation, not retroactively to existing
+help tickets, and does not propagate later edits. Accepted criteria remain a
+reviewer's assertion backed by their evidence, not an automated quality verdict.
+Explicit requeueing still remains necessary after help is reviewed.
 
-The graph test exercises validation and rollback on prepared coherent data. It
-does not establish UI or end-to-end throughput for thousands of tickets.
-
-Fresh multi-project browser QA remains pending explicit authorization after the
-earlier tool denial. API, CLI and MCP checks do not substitute for visual QA.
-No source project changes, worker launches or game acceptance follow from these
-documentary pilot queries.
+These regression fixtures do not modify the four game projects or their source
+files. Existing documentary pilots remain separate. Fresh browser QA is still
+pending explicit authorization after the earlier tool denial; protocol and CLI
+checks do not constitute visual verification.

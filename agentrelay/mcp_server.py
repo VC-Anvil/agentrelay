@@ -170,7 +170,7 @@ def create_mcp(store: Store, actor: str) -> FastMCP:
     @server.tool(annotations=write)
     def request_help(ticket_id: str, expected_revision: int, title: str, description: str,
                      profile_id: str | None = None) -> dict:
-        """Create a help child with diagnosis and block the parent on that result."""
+        """Create a help child inheriting current priority and block the parent on that result."""
         return act("request_help", {"id": ticket_id, "expected_revision": expected_revision,
                                    "title": title, "description": description, "profile_id": profile_id})
 

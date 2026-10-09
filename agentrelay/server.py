@@ -64,7 +64,7 @@ class AppServer(ThreadingHTTPServer):
 
 class Handler(BaseHTTPRequestHandler):
     server: AppServer
-    server_version = "AgentRelay/0.7"
+    server_version = "AgentRelay/0.7.1"
 
     def log_message(self, fmt, *args):
         logging.getLogger("agentrelay.http").info(fmt, *args)
