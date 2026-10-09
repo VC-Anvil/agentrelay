@@ -12,6 +12,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import __version__
+
 
 TYPES = {"objective", "task", "bug", "research", "review", "help"}
 STATUSES = {"backlog", "queued", "in_progress", "blocked", "review", "done", "cancelled"}
@@ -234,6 +236,8 @@ class Store:
             counts = {status: sum(t["status"] == status for t in tickets) for status in sorted(STATUSES)}
             state = {"tickets": tickets, "profiles": profiles,
                      "events": self._events(db, limit=100),
+                     "runs": self._execution_history(db, 100),
+                     "demo": db.execute("SELECT 1 FROM metadata WHERE key='demo_seeded'").fetchone() is not None,
                      "stats": {"total": len(tickets), "ready": sum(t["ready"] for t in tickets), "by_status": counts}}
             db.commit()
             return state
@@ -251,15 +255,48 @@ class Store:
             db.commit()
             return context
 
+    def is_demo(self):
+        with self._connection() as db:
+            return db.execute("SELECT 1 FROM metadata WHERE key='demo_seeded'").fetchone() is not None
+
+    def _execution_history(self, db, limit=None):
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_runs'").fetchone() is None:
+            return []
+        query = ("SELECT id,ticket_id,worker_id,status,started_at,finished_at,summary,error,model,effort "
+                 "FROM execution_runs ORDER BY started_at DESC,id DESC")
+        return [dict(row) for row in db.execute(query + (" LIMIT ?" if limit is not None else ""),
+                                                (limit,) if limit is not None else ())]
+
+    def execution_history(self):
+        with self._connection() as db:
+            return self._execution_history(db, 100)
+
+    def backup(self, destination):
+        """Online SQLite backup. Never overwrite an existing file or copy a live WAL."""
+        path = Path(destination).expanduser().resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Exclusive creation prevents accidental destruction even under races.
+        with path.open("xb"):
+            pass
+        with self._connection() as source:
+            target = sqlite3.connect(path)
+            try:
+                source.backup(target)
+            finally:
+                target.close()
+        return path
+
     def export(self):
         with self._connection() as db:
             db.execute("BEGIN")
             tickets = [self._ticket(db, row[0]) for row in db.execute("SELECT id FROM tickets ORDER BY id")]
             profiles = [self._profile(row) for row in db.execute("SELECT * FROM profiles ORDER BY id")]
             events = self._events(db)
+            runs = self._execution_history(db)
+            demo = db.execute("SELECT 1 FROM metadata WHERE key='demo_seeded'").fetchone() is not None
             db.commit()
-            return {"version": "0.1.0", "exported_at": _utc(), "tickets": tickets,
-                    "profiles": profiles, "events": events}
+            return {"version": __version__, "exported_at": _utc(), "demo": demo, "tickets": tickets,
+                    "profiles": profiles, "events": events, "runs": runs}
 
     def _check_graph(self, db):
         """Every parent waits for children; every ticket waits for dependencies."""

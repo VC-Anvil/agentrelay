@@ -4,7 +4,9 @@ Location: `D:/AgentWorkspace/agentrelay`.
 
 The verified development environment is `.runtime/Scripts/python.exe` (Python 3.12.14). The machine's Python 3.14 launcher could run standard-library tests but failed during `venv` bootstrap; that failed attempt is preserved in ignored `.venv/`. No global Python installation was changed.
 
-The demonstration preview for this session uses port **8788**, database `.agentrelay/demo.sqlite`. Its logs are `.agentrelay/preview.out.log` and `.agentrelay/preview.err.log`. Normal CLI default is port 8787.
+The demonstration preview for this session uses port **8788**, database `.agentrelay/demo.sqlite`. Its logs are `.agentrelay/web-8788.out.log` and `.agentrelay/web-8788.err.log`. Normal CLI default is port 8787.
+
+The ignored `.agentrelay/workers.local.json` configures the installed Codex CLI with Sol/high, a read-only sandbox and an isolated `.agentrelay/smoke` working directory. Start it explicitly with `Start-AgentRelay.ps1 -Demo -Port 8788 -Workers .agentrelay/workers.local.json`. This configuration is for validation, not arbitrary repository editing. The real inference smoke database is `.agentrelay/live-validation.sqlite`; its report and independent review are recorded in validation. Generic setup is in [EXECUTION.md](EXECUTION.md).
 
 Start a real empty project in another terminal:
 

@@ -12,9 +12,7 @@ EVIDENCE = [{"kind": "file", "label": "Review sample", "uri": "local://sample"}]
 
 class StoreTests(unittest.TestCase):
     def setUp(self):
-        runtime = Path(__file__).resolve().parents[1] / ".runtime"
-        runtime.mkdir(exist_ok=True)
-        self.directory = tempfile.TemporaryDirectory(dir=runtime)
+        self.directory = tempfile.TemporaryDirectory(prefix="agentrelay-store-")
         self.path = Path(self.directory.name) / "tickets.db"
         self.store = Store(self.path)
 
@@ -38,7 +36,8 @@ class StoreTests(unittest.TestCase):
         reopened = Store(self.path)
         self.assertEqual(reopened.context(ticket["id"])["ticket"]["title"], "Persist me")
         exported = reopened.export()
-        self.assertEqual(exported["version"], "0.1.0")
+        from agentrelay import __version__
+        self.assertEqual(exported["version"], __version__)
         self.assertEqual(len(exported["tickets"]), 1)
         self.assertEqual(exported["events"][0]["action"], "create_ticket")
 

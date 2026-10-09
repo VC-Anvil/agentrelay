@@ -13,9 +13,7 @@ from agentrelay.store import Store
 
 class HTTPTests(unittest.TestCase):
     def setUp(self):
-        test_root = Path(__file__).resolve().parents[1] / ".cache" / "tests"
-        test_root.mkdir(parents=True, exist_ok=True)
-        self.temp = tempfile.TemporaryDirectory(dir=test_root)
+        self.temp = tempfile.TemporaryDirectory(prefix="agentrelay-http-")
         self.store = Store(Path(self.temp.name) / "http.sqlite")
         self.server = AppServer(("127.0.0.1", 0), self.store)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)

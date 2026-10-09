@@ -4,7 +4,7 @@
 
 Turn goals into prioritized tickets, share durable context between agents, and keep delivery separate from acceptance. Humans use the web board; agents use the MCP server. Both operate on the same SQLite database.
 
-AgentRelay 0.1 is a working local coordination application, not an autonomous agent launcher. It makes no inference calls. Model profiles are recommendations; actual settings are separately declared by the connected worker.
+AgentRelay 0.2 combines a persistent ticket board, an MCP server and optional worker execution. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
 
 ![AgentRelay local board with explicitly fictional demo data](docs/preview.jpg)
 
@@ -36,8 +36,23 @@ Windows quick launch: `powershell -File .\Start-AgentRelay.ps1 -Demo`. It prefer
 - Independent review with evidence references and explicit acceptance; cyclic dependency/hierarchy combinations are rejected.
 - Persistent audit history, versioned JSON export and isolated demonstration data.
 - MCP tools for external agents and a companion [skill](skills/agentrelay-work/SKILL.md).
+- Explicit worker launch/cancel, timeouts, bounded output, durable run history and conflict-safe results.
+- Codex CLI and Ollama text adapters, plus a provider-independent JSON worker protocol.
+- Bounded priority queue processing and online SQLite backup/restore.
 
 The initial profiles reflect the local author's workflow: Astra/high coordinates, with Sol, Terra and Luna as specialists. These names do not mean those models are connected or available. Add your own provider/model profiles in **Perfiles**. The Astra coordinator profile is deliberately locked under the current workspace policy.
+
+## Execute a ticket
+
+Copy and edit [the worker configuration](examples/workers.codex.json), then start:
+
+```sh
+agentrelay serve --db /absolute/project/.agentrelay/workspace.sqlite --workers /absolute/workers.json
+```
+
+The package must be installed in the configured worker's Python environment. Open a ready ticket with acceptance criteria and select **Ejecutar tarea**. The **Ejecuciones** page records the process result. A worker can submit evidence, request help, split the ticket or report a blocker; it cannot approve its own work. Nothing launches on page load.
+
+[Execution setup, worker protocol, bounded queue and recovery](docs/EXECUTION.md). Codex defaults to read-only; enabling workspace edits is an explicit configuration choice. Provider runs may consume your connected account's allowance. Ollama requires an already-installed model and supports written analysis, not tool execution.
 
 ## Connect an agent via MCP
 
@@ -91,8 +106,8 @@ The [GitHub Actions template](docs/github-actions-tests.yml) tests Python 3.11/3
 
 ## Current boundaries
 
-This release coordinates existing agents; it does not launch provider sessions, schedule workers, measure token spend, synchronize GitHub Issues or provide multi-user authentication. Recorded model/effort values are declarations, not provider-attested telemetry. The browser represents one local human identity, so self-authored manual work needs a different reviewer connection.
+This release supports explicit launches and bounded serial queue processing. It does not run an unattended scheduler, measure token spend, synchronize GitHub Issues or provide multi-user authentication. Recorded model/effort values are declarations, not provider-attested telemetry. The browser represents one local human identity, so self-authored manual work needs a different reviewer connection.
 
-The service binds only to `127.0.0.1`, checks Host/Origin and rejects cross-origin mutations. Do not expose it through a public proxy. Back up your SQLite database while the server is stopped (or use SQLite's backup API); copying a live WAL database's main file alone is insufficient. JSON export is a portable report; import is not implemented.
+The service binds only to `127.0.0.1`, checks Host/Origin and rejects cross-origin mutations. Do not expose it through a public proxy. Use `agentrelay backup --db /absolute/workspace.sqlite --output /absolute/new-backup.sqlite` for an online SQLite backup; copying a live WAL database's main file alone is insufficient. JSON export is an inspection report; restore uses the SQLite backup. Cancellation cannot undo files already changed. After a host crash inspect orphan processes before retrying.
 
 MIT licensed. Source stays separate from private project data, environments and logs. No telemetry.

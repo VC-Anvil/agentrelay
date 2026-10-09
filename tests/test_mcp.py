@@ -18,9 +18,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
 
-        test_root = Path(__file__).resolve().parents[1] / ".cache" / "tests"
-        test_root.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=test_root) as directory:
+        with tempfile.TemporaryDirectory(prefix="agentrelay-mcp-") as directory:
             db = Path(directory) / "shared.sqlite"
             store = Store(db)
             params = StdioServerParameters(command=sys.executable, args=["-m", "agentrelay", "mcp", "--db", str(db), "--actor", "agent:integration-test"], cwd=str(Path(__file__).resolve().parents[1]))

@@ -1,0 +1,14 @@
+{
+  "workers": [
+    {
+      "id": "local-text",
+      "name": "Ollama · text-only analysis",
+      "command": ["/absolute/path/to/venv/bin/python", "-m", "agentrelay.adapters", "ollama"],
+      "cwd": "/absolute/path/to/your/project",
+      "model": "replace-with-an-installed-local-model",
+      "effort": "default",
+      "profile_ids": [],
+      "timeout_seconds": 360
+    }
+  ]
+}

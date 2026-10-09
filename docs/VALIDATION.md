@@ -1,49 +1,41 @@
-# Validation — AgentRelay 0.1.0
+# Validation — AgentRelay 0.2.0
 
-Date: 2026-10-09 (Europe/Madrid). Platform: Windows; Python 3.12.14; official MCP Python SDK 1.30.0; desktop in-app Chromium browser. Coordinator integrated backend and frontend specialist packages; review added regressions beyond the authors' tests.
+Date: 2026-10-09. Windows, Python 3.12.14, MCP Python SDK 1.30.0, Codex CLI 0.162.0-alpha.2. The earlier browser validation is preserved in [v0.1 evidence](VALIDATION_0_1.md).
 
-## Automated verification
+## Automated checks
 
-`python -X utf8 -m unittest discover -s tests -v`: **20 passed**, 30.114 seconds in the final full run. Local raw log: `.agentrelay/verification.log` (ignored, not source).
+Final command: `python -X utf8 -m unittest discover -s tests -v` — **35 passed in 11.543 seconds**. Raw local log: `.agentrelay/v02-final-localtemp.log` (ignored).
 
-- 13 domain tests: persistent reopening/export, optimistic revisions, owner protection, Astra configuration restrictions, before/after audit data, help and split workflow, parent/dependency cycles, independent review, explicit isolated demo seeding, and unassigned blocked-task resume.
-- 3 HTTP integration tests using real sockets: create/update/conflict/context/export, actionable errors, rejection of cross-origin/host/actor spoofing and path traversal.
-- 3 independent integrity tests: two workers competing concurrently for the same revision (exactly one succeeds), preventing new unreviewed children under a closed parent, and profiles without a configurable reasoning setting.
-- 1 MCP integration test using an actual official SDK stdio client and server subprocess: initialize/discover → create → claim → request help → second worker delivers help → independent review → parent requeue → resume → checkpoint → submit → reject self-review → independent completion → resource read. No model inference was involved.
+- 13 Store domain tests, 3 integrity regressions, 3 real HTTP tests and 1 actual SDK stdio client/server test preserve the existing ticket lifecycle.
+- 8 subprocess execution tests cover claim/result transactions, help/split, failure, nonzero exit, malformed and oversized output, timeout, cancellation, contention, stale revision protection, restart recovery, profile constraints and required acceptance. These use explicitly identified Python fixtures, not LLMs.
+- 7 integration/adapter tests cover HTTP launch through independent review and export, online backup/reopening and overwrite rejection, priority ordering, persistent demo labeling, API validation, exact saved report contents, explicit Codex model/sandbox/schema and rejection of unsupported Ollama settings.
 
-`node --check agentrelay/static/app.js`: passed. Companion skill: bundled `skill-creator/scripts/quick_validate.py` reports **Skill is valid!**. Installation of the editable package and CLI help were verified. Source distribution and wheel build succeeded, with static assets and the skill included; distribution checksums are in `dist/SHA256SUMS.txt` after final packaging.
+JavaScript syntax, companion skill validation and `git diff --check` are additional release checks. Source and wheel distribution checks are recorded in the local build logs and `dist/SHA256SUMS.txt`. CI is not active: the GitHub publishing credential lacks `workflow` scope. The prepared Windows/Linux matrix remains [a template](github-actions-tests.yml), not a passing CI claim.
 
-## Browser verification
+## Real inference and independent acceptance
 
-Against the isolated demo database at `http://127.0.0.1:8788`:
+A separate `.agentrelay/live-validation.sqlite` project was used; no fictional demo ticket was treated as real work.
 
-1. Created `AR-0009`, an explicitly labeled QA task, with description, urgent priority, Sol recommendation and two acceptance criteria.
-2. Reserved it using the fixture identity `agent:qa-browser`, explicitly recording `prueba-ui-sin-llm` / `none`; these are test declarations, not an agent run.
-3. Saved a checkpoint; submitted a summary and `docs/VALIDATION.md` evidence reference.
-4. Reloaded the page and confirmed persisted title, priority, recommended profile, execution declaration, review state and evidence URI.
-5. Checked both acceptance criteria in the browser and completed the ticket under the UI's separate `human` identity. Observed the ticket in the completed column.
-6. Added `QA · Modelo local`, a profile explicitly described as unconnected, with a `none` effort setting.
-7. Requested help on `AR-0006`: observed new child `AR-0010`, the dependency and blocked parent state.
-8. Switched board/list and filtered by `QA ·`; observed both matching tasks and their distinct states.
-9. Exported JSON through the UI and read the actual downloaded file: schema version 0.1.0, 10 tickets, 5 profiles, 20 events, QA ticket `done`.
-10. Inspected the actual rendered desktop layout. Screenshot: `docs/preview.jpg`.
+- Ticket `AR-0001`: identify the dependency cycle A depends on B, B on C, C on A; remove one edge; report a valid execution order and explicitly state the limits of textual analysis.
+- Worker `codex-sol`: installed Codex CLI, configured `gpt-6-sol` / `high`, read-only sandbox, isolated working directory, 240-second timeout. No fallback model.
+- Run `run-19e5ecdfbaba49a9b6904bcbbbd225e9`: started 20:55:13.894 UTC, submitted 20:55:26.830 UTC. Wall-clock run duration 12.936 seconds includes the adapter and CLI, not just inference.
+- The actual saved report correctly identified A → B → C → A, removed C's dependency on A and proposed C → B → A. It explicitly stated that no code tests had run. [Exact report copy](../examples/results/cycle-report.md), SHA-256 `22c113a77d7267f109612f9f5dbcffb6617f1bacda4d68c547682dcba9011ae2`.
+- The ticket first entered `review`. The integrator read the artifact, checked all three criteria and completed it using the separate `agent:astra-reviewer` identity. This was an actual review, not worker self-approval.
 
-## Defects found and corrected
+This verifies one bounded real-model text task through the shipped Codex bridge. It does not benchmark general coding ability, attest provider internals or measure token savings. Ollama was installed but had no local models; no Ollama inference is claimed and no model was downloaded.
 
-- CSS display rules overrode HTML `hidden`, leaving the loading panel visible. Added an explicit hidden rule and rechecked the rendered layout.
-- Active/review tickets had no UI state-transition action. Added it for pausing/requeue/rejection.
-- Claim forms prefilled actual settings from recommended profiles. Removed that inference; recommendations remain separate and no runtime launch is implied.
-- Raw audit JSON overwhelmed the history. Added readable summaries and expandable original details.
-- Profile settings initially excluded models without adjustable reasoning. Added `none`/`default` and verified creation through UI and backend.
-- Background refresh rebuilt new-ticket relation selectors without retaining choices. Preserved their selected values.
-- Backend review found paused-owner, coordinator-claim and closed-parent scope gaps. Added guards and regression cases.
+## Review and environment findings
 
-## Environment attempts preserved
+Independent frontend review found and the integration corrected: running without acceptance criteria, incompatible wildcard workers offered for Astra, a cancellation race with an inaccurate success toast, discarded subprocess diagnostics, missing taskkill fallback, incoherent ticket/run snapshots and unhelpful configuration tracebacks. Late drawer-context responses are also guarded. Diagnostics remain bounded local files rather than web content.
 
-The machine's default Python 3.14 failed while bootstrapping pip in `.venv`. A separate `.runtime` uses the available bundled Python 3.12; no global runtime was modified. Sandbox network isolation prevented real loopback HTTP and stdio subprocess tests; after running the same checks with the required execution permission they passed. These environment failures are not counted as passing tests. Failed environments and caches remain ignored rather than destructively cleaned.
+A preliminary 35-test integrated run passed in 135.381 seconds. A subsequent run stalled and failed on the shared D: test directories. A faulthandler trace located a long wait in SQLite connection close during test setup; raw attempts remain `.agentrelay/v02-final-tests.log` and `.agentrelay/execution-diagnosis.log`. Tests now use the operating system's temporary directory instead of forcing test databases into the source/virtual-environment tree. The final full run above passed without changing acceptance checks, worker deadlines or SQLite durability settings. Interrupted and failed attempts are not counted as passing.
 
-## Limits and continuation
+## Visual verification boundary
 
-Prepared and technically verified as a local v0.1 application. Human product acceptance and real-model host trials remain separate. The MCP test proves the protocol and shared state, not autonomous task performance. No LLM was launched; no inference quota or cost saving was measured. There is no worker scheduler, hosted deployment, GitHub synchronization, provider telemetry or multi-user authentication. Evidence references require actual reviewer inspection; the application does not certify their contents. Mobile and other operating systems have not been exercised; the added CI matrix has not run on GitHub.
+The v0.1 board and manual workflow were exercised in the browser and captured in `docs/preview.jpg`. During v0.2 validation the browser tool denied access to the local page, so the new execution UI has static review, syntax and HTTP-contract verification but **has not yet received a fresh browser walkthrough**. No alternate browser route was used after that denial. The pending user authorization is for the local preview at `http://127.0.0.1:8788`.
 
-All browser QA was confined to fictional demo data. At validation time the source had not been published. The subsequent publication attempt required storing the CI configuration as `docs/github-actions-tests.yml`: GitHub rejected creation of an active workflow because the publishing credential lacks `workflow` scope. CI is not active; this does not change the application source or the local results above. Continue from `docs/ARCHITECTURE.md` for worker adapters and acceptance policies; configure an actual host using `docs/LOCAL_SETUP.md` when testing an external agent.
+## Operational boundaries
+
+One trusted local user, one execution manager and active worker per database. No unattended scheduler, provider spend metering, GitHub Issues sync, cross-project file locking or public hosting. Model fields are configured declarations. Evidence requires review. Cancellation stops owned processes under normal operation but cannot revert files. An abrupt manager/host crash can leave orphan children; restart blocks unfinished tickets without automatically retrying or killing potentially reused process IDs. Inspect processes and changed files before retrying interrupted work.
+
+Continue with [execution setup](EXECUTION.md) and [local checkout configuration](LOCAL_SETUP.md). Remaining acceptance gates are the fresh v0.2 browser walkthrough and running the prepared GitHub CI matrix once an authorized credential can install it.

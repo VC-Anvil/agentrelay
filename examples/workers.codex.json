@@ -1,0 +1,14 @@
+{
+  "workers": [
+    {
+      "id": "codex-sol",
+      "name": "Codex · Sol high · read only",
+      "command": ["/absolute/path/to/venv/bin/python", "-m", "agentrelay.adapters", "codex"],
+      "cwd": "/absolute/path/to/your/project",
+      "model": "gpt-6-sol",
+      "effort": "high",
+      "profile_ids": ["sol"],
+      "timeout_seconds": 900
+    }
+  ]
+}

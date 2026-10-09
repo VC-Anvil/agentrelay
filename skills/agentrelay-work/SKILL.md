@@ -31,4 +31,4 @@ An independent reviewer uses `review_ticket` only after inspecting the evidence 
 
 Do not finish a parent merely because children closed: verify the integrated outcome. Cancellation does not satisfy an explicit dependency. When blocked by missing user input, write a focused question and preserve progress; do not poll or manufacture an answer.
 
-The service is a local coordination layer. It does not launch models, send messages, spend inference credits or grant permission to publish. External agents keep their own execution and approval rules.
+The MCP connection coordinates state; its tools do not launch models or grant permission to publish. An optional, separately configured execution manager can launch workers through the local UI or CLI. If running under its JSON result protocol, return the result to that manager instead of mutating the claimed ticket through MCP, which would invalidate its revision. External agents keep their own execution and approval rules.

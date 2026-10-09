@@ -11,9 +11,7 @@ from agentrelay.store import DomainError, Store
 
 class IntegrityTests(unittest.TestCase):
     def setUp(self):
-        root = Path(__file__).resolve().parents[1] / ".cache" / "tests"
-        root.mkdir(parents=True, exist_ok=True)
-        self.temp = tempfile.TemporaryDirectory(dir=root)
+        self.temp = tempfile.TemporaryDirectory(prefix="agentrelay-integrity-")
         self.store = Store(Path(self.temp.name) / "integrity.sqlite")
 
     def tearDown(self):

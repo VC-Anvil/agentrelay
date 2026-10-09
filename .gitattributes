@@ -4,3 +4,5 @@
 *.css text eol=lf
 *.html text eol=lf
 *.md text eol=lf
+# Preserve the exact bytes and recorded hash of the real inference artifact.
+examples/results/cycle-report.md -text whitespace=cr-at-eol

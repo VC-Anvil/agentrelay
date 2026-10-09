@@ -24,7 +24,20 @@
     split_ticket: "Tarea dividida",
     add_comment: "Comentario añadido",
     create_profile: "Perfil creado",
-    update_profile: "Perfil actualizado"
+    update_profile: "Perfil actualizado",
+    start_run: "Ejecución iniciada",
+    cancel_run: "Ejecución cancelada"
+  };
+  const RUN_STATUS = {
+    running: "En ejecución",
+    submitted: "En revisión",
+    help_requested: "Ayuda solicitada",
+    split: "Dividida",
+    blocked: "Bloqueada",
+    failed: "Fallida",
+    cancelled: "Cancelada",
+    interrupted: "Interrumpida",
+    conflict: "Conflicto"
   };
   const FIELD = {
     title: "título", description: "descripción", type: "tipo", status: "estado",
@@ -139,6 +152,7 @@
     if (app.loading) return;
     app.loading = true;
     try {
+      const previousRuns = JSON.stringify((app.state?.execution?.runs || []).map((run) => [run.id, run.status, run.finished_at]));
       const state = await request("/api/state", { headers: { "X-AgentRelay-Client": "browser" } });
       app.state = state;
       setConnected(true);
@@ -147,6 +161,13 @@
       $("#loading-state").hidden = true;
       showSection(app.section, false);
       renderAll();
+      if (app.selectedId && !app.drawerDirty) {
+        const latest = state.tickets?.find((ticket) => ticket.id === app.selectedId);
+        const nextRuns = JSON.stringify((state.execution?.runs || []).map((run) => [run.id, run.status, run.finished_at]));
+        if (!app.context || latest?.revision !== app.context.ticket?.revision || previousRuns !== nextRuns) {
+          await loadContext(app.selectedId);
+        }
+      }
     } catch (error) {
       setConnected(false);
       if (!quiet || !app.state) {
@@ -350,12 +371,109 @@
     });
   }
 
+  function executionState() {
+    return app.state?.execution || { enabled: false, workers: [], runs: [] };
+  }
+
+  function compatibleWorkers(ticket) {
+    return (executionState().workers || []).filter((worker) => {
+      const profiles = worker.profile_ids || [];
+      const profileMatches = !profiles.length || (ticket.profile_id && profiles.includes(ticket.profile_id));
+      const astraMatches = ticket.profile_id !== "astra" || (worker.model === "gpt-6-astra" && worker.effort === "high");
+      return profileMatches && astraMatches;
+    });
+  }
+
+  function configuredWorkerText(worker) {
+    const effort = worker.effort && worker.effort !== "default" ? ` · esfuerzo ${worker.effort}` : " · esfuerzo predeterminado";
+    return `${worker.model || "Modelo no indicado"}${effort} · límite ${worker.timeout_seconds || "—"} s`;
+  }
+
+  function setupExecutionEmpty(title, message) {
+    const empty = node("div", "execution-setup empty-page");
+    empty.append(node("h2", "", title), node("p", "", message));
+    const command = node("code", "setup-command", "agentrelay serve --workers workers.json");
+    empty.append(command, node("p", "setup-help", "Consulta la sección de ejecución local de la documentación para el formato JSON de ejecutores."));
+    return empty;
+  }
+
+  function renderExecutions() {
+    const execution = executionState();
+    const overview = $("#execution-overview");
+    const list = $("#runs-list");
+    clear(overview); clear(list);
+    if (!execution.enabled) {
+      overview.append(setupExecutionEmpty("Ejecución local desactivada", "El flujo manual y MCP continúa disponible. Para habilitar ejecutores, reinicia el servicio con un archivo de configuración explícito."));
+    } else if (!(execution.workers || []).length) {
+      overview.append(setupExecutionEmpty("No hay ejecutores configurados", "La ejecución está habilitada, pero el archivo indicado no contiene ejecutores utilizables. Revisa la configuración y reinicia el servicio."));
+    } else {
+      const running = (execution.runs || []).find((run) => run.status === "running");
+      if (running) overview.append(node("div", "run-notice", `Hay una ejecución activa: ${running.id} · ${running.ticket_id}. AgentRelay admite una sola ejecución simultánea.`));
+      const heading = node("div", "subsection-head");
+      heading.append(node("h2", "", "Ejecutores configurados"), node("span", "", `${execution.workers.length} configurado${execution.workers.length === 1 ? "" : "s"}`));
+      const grid = node("div", "workers-grid");
+      execution.workers.forEach((worker) => {
+        const card = node("article", "worker-card");
+        const head = node("div", "worker-head");
+        head.append(node("span", "avatar", initials(worker.name)), node("div", "worker-title"));
+        $(".worker-title", head).append(node("strong", "", worker.name), node("small", "", worker.id));
+        card.append(head, node("p", "worker-model", configuredWorkerText(worker)));
+        const profiles = worker.profile_ids || [];
+        card.append(node("small", "worker-profiles", profiles.length ? `Perfiles: ${profiles.map((id) => profileById(id)?.name || id).join(", ")}` : "Sin restricción de perfil; Astra conserva su modelo y esfuerzo obligatorios"));
+        grid.append(card);
+      });
+      overview.append(heading, grid);
+    }
+
+    const runHeading = node("div", "subsection-head");
+    const runs = execution.runs || [];
+    runHeading.append(node("h2", "", "Historial de ejecuciones"), node("span", "", `${runs.length} registro${runs.length === 1 ? "" : "s"}`));
+    list.append(runHeading);
+    if (!runs.length) {
+      list.append(node("div", "empty-page compact-empty", execution.enabled ? "Aún no hay ejecuciones. Abre una tarea en cola y lista para elegir un ejecutor compatible." : "Las ejecuciones aparecerán aquí cuando habilites esta función y lances una tarea."));
+      return;
+    }
+    runs.forEach((run) => {
+      const card = node("article", "run-card");
+      const top = node("div", "run-card-top");
+      const identity = node("div");
+      identity.append(node("span", "ticket-id", run.id), node("h3", "", `${run.ticket_id} · ${execution.workers.find((worker) => worker.id === run.worker_id)?.name || run.worker_id}`));
+      top.append(identity, node("span", `run-status run-${run.status}`, RUN_STATUS[run.status] || run.status));
+      card.append(top);
+      const facts = node("div", "run-facts");
+      facts.append(node("span", "", `Modelo configurado: ${run.model || "no indicado"}`), node("span", "", `Esfuerzo: ${run.effort || "predeterminado"}`), node("span", "", `Inicio: ${formatDate(run.started_at)}`));
+      if (run.finished_at) facts.append(node("span", "", `Fin: ${formatDate(run.finished_at)}`));
+      card.append(facts);
+      if (run.summary) card.append(node("p", "run-summary", run.summary));
+      if (run.error) card.append(node("p", "run-error", run.error));
+      const actions = node("div", "run-actions");
+      const open = node("button", "button button-quiet button-small", "Abrir tarea");
+      open.type = "button"; open.dataset.ticketId = run.ticket_id;
+      actions.append(open);
+      if (run.status === "running") {
+        const cancel = node("button", "button button-danger button-small", "Cancelar ejecución");
+        cancel.type = "button";
+        cancel.addEventListener("click", async () => {
+          cancel.disabled = true;
+          try {
+            const result = await mutate("cancel_run", { run_id: run.id }, null);
+            if (result?.status === "cancelled") toast("Ejecución cancelada");
+            else toast(`La ejecución ya había terminado: ${RUN_STATUS[result?.status] || result?.status || "estado desconocido"}`);
+          } catch (_) { cancel.disabled = false; }
+        });
+        actions.append(cancel);
+      }
+      card.append(actions); list.append(card);
+    });
+  }
+
   function renderAll() {
     if (!app.state) return;
     syncGlobalSelects();
     renderMetrics();
     renderBoard();
     renderList();
+    renderExecutions();
     renderProfiles();
     renderActivity();
     setDisplay(app.display);
@@ -365,6 +483,7 @@
     app.section = section;
     const content = {
       board: ["Espacio de trabajo", "Proyecto", "Coordina el trabajo humano y de agentes externos con evidencia trazable."],
+      executions: ["Ejecución local", "Ejecuciones", "Lanza trabajo con ejecutores configurados y conserva el resultado para revisión humana."],
       profiles: ["Configuración", "Perfiles", "Recomendaciones explícitas de rol, modelo, esfuerzo y capacidades."],
       activity: ["Auditoría", "Actividad", "Historial reciente y verificable del proyecto."]
     }[section];
@@ -388,6 +507,7 @@
   async function loadContext(id, { forceRender = false } = {}) {
     try {
       const context = await request(`/api/tickets/${encodeURIComponent(id)}/context`, { headers: { "X-AgentRelay-Client": "browser" } });
+      if (!forceRender && app.drawerDirty) return;
       app.context = context;
       if (forceRender || !app.drawerDirty) renderDrawer();
     } catch (error) {
@@ -478,9 +598,14 @@
     ].filter(Boolean);
     summaryData.forEach((value) => summary.append(node("span", "summary-pill", value)));
     if ((ticket.blockers || []).length) summary.append(node("span", "summary-pill blockers", `${ticket.blockers.length} bloqueo${ticket.blockers.length === 1 ? "" : "s"}`));
-    body.append(summary, editSection(ticket), lifecycleSection(ticket), relationsSection(ticket), evidenceSection(ticket), contextSection(ticket));
+    const sections = [summary, editSection(ticket), lifecycleSection(ticket)];
+    if (ticket.status === "queued" && ticket.ready) sections.push(executionSection(ticket));
+    sections.push(relationsSection(ticket), evidenceSection(ticket), contextSection(ticket));
+    body.append(...sections);
     app.drawerDirty = false;
-    $("#drawer-body").addEventListener("input", () => { app.drawerDirty = true; }, { once: true });
+    const markDirty = () => { app.drawerDirty = true; };
+    $("#drawer-body").addEventListener("input", markDirty, { once: true });
+    $("#drawer-body").addEventListener("change", markDirty, { once: true });
   }
 
   function editSection(ticket) {
@@ -556,6 +681,60 @@
       $$('[data-action-panel]', panels).forEach((panel) => { panel.hidden = panel.dataset.actionPanel !== button.dataset.actionTab; });
     });
     section.append(tabs, panels);
+    return section;
+  }
+
+  function executionSection(ticket) {
+    const section = drawerSection("Ejecución local");
+    const execution = executionState();
+    if (!(ticket.acceptance || []).length) {
+      section.append(node("div", "context-note", "Esta tarea no se puede ejecutar todavía. Añade al menos un criterio de aceptación para delimitar el resultado y su revisión."));
+      return section;
+    }
+    if (!execution.enabled) {
+      section.append(node("div", "context-note", "La ejecución local está desactivada. El trabajo manual y mediante MCP sigue disponible. Configúrala al iniciar el servicio con --workers workers.json."));
+      return section;
+    }
+    const workers = compatibleWorkers(ticket);
+    if (!workers.length) {
+      const profile = profileById(ticket.profile_id);
+      section.append(node("div", "context-note", profile ? `No hay un ejecutor configurado para el perfil recomendado ${profile.name}. Puedes tomar la tarea manualmente o actualizar la configuración de ejecutores.` : "Esta tarea no tiene perfil y no hay un ejecutor configurado para cualquier perfil. Puedes tomarla manualmente o actualizar la configuración."));
+      return section;
+    }
+    const running = (execution.runs || []).find((run) => run.status === "running");
+    const form = node("form", "stack-form execution-form");
+    const workerSelect = select("worker_id", workers.map((worker) => [worker.id, worker.name]), workers[0].id);
+    form.append(field("Ejecutor compatible", workerSelect));
+    const configured = node("div", "execution-config");
+    const updateConfigured = () => {
+      const worker = workers.find((item) => item.id === workerSelect.value);
+      clear(configured);
+      if (!worker) return;
+      configured.append(node("strong", "", worker.name), node("span", "", `Modelo de ejecución: ${worker.model || "no indicado"}`), node("span", "", `Esfuerzo de ejecución: ${worker.effort || "predeterminado"}`), node("span", "", `Tiempo máximo: ${worker.timeout_seconds || "—"} segundos`));
+    };
+    workerSelect.addEventListener("change", updateConfigured);
+    updateConfigured();
+    form.append(configured, node("div", "context-note", "AgentRelay iniciará el ejecutor elegido. Si entrega un resultado, la tarea pasará a revisión; la aceptación sigue siendo una decisión humana."));
+    if (running) form.append(node("div", "alert alert-error", `Ya hay una ejecución activa (${running.id} · ${running.ticket_id}). Cancélala o espera a que termine antes de iniciar otra.`));
+    const actions = node("div", "form-actions");
+    const start = node("button", "button button-primary button-small", "Ejecutar tarea");
+    start.type = "submit"; start.disabled = Boolean(running);
+    workerSelect.disabled = Boolean(running);
+    actions.append(start); form.append(actions);
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const openTicketState = currentTicket();
+      if (!openTicketState || openTicketState.status !== "queued" || !openTicketState.ready) {
+        toast("La tarea ya no está en cola y lista. Actualiza su contexto.", true);
+        return;
+      }
+      start.disabled = true;
+      try {
+        await mutate("start_run", { ticket_id: ticket.id, worker_id: workerSelect.value, expected_revision: openTicketState.revision }, "Ejecución iniciada");
+        app.drawerDirty = false;
+      } catch (_) { start.disabled = false; }
+    });
+    section.append(form);
     return section;
   }
 
@@ -792,6 +971,7 @@
     $("#new-profile-button").addEventListener("click", () => openProfile());
     $("#export-button").addEventListener("click", exportJson);
     $("#refresh-button").addEventListener("click", () => loadState());
+    $("#refresh-executions-button").addEventListener("click", () => loadState());
     $("#scrim").addEventListener("click", closeTicket);
     $("[data-close]").addEventListener("click", closeTicket);
     document.addEventListener("keydown", (event) => { if (event.key === "Escape" && app.selectedId) closeTicket(); });

@@ -13,3 +13,5 @@ dist/
 *.db*
 *.log
 test-results/
+runs/
+workers.local.json

@@ -16,6 +16,7 @@
       </a>
       <nav class="main-nav">
         <button class="nav-item is-active" type="button" data-nav="board"><span aria-hidden="true">▦</span> Proyecto</button>
+        <button class="nav-item" type="button" data-nav="executions"><span aria-hidden="true">▶</span> Ejecuciones</button>
         <button class="nav-item" type="button" data-nav="profiles"><span aria-hidden="true">◎</span> Perfiles</button>
         <button class="nav-item" type="button" data-nav="activity"><span aria-hidden="true">↗</span> Actividad</button>
       </nav>
@@ -47,7 +48,7 @@
           <label class="search-field"><span class="sr-only">Buscar tareas</span><span aria-hidden="true">⌕</span><input id="search-filter" type="search" placeholder="Buscar por título, ID o descripción"></label>
           <label class="compact-field"><span>Prioridad</span><select id="priority-filter"><option value="">Todas</option><option value="urgent">Urgente</option><option value="high">Alta</option><option value="normal">Normal</option><option value="low">Baja</option></select></label>
           <label class="compact-field"><span>Perfil</span><select id="profile-filter"><option value="">Todos</option></select></label>
-          <label class="compact-field"><span>Estado</span><select id="status-filter"><option value="">Activos</option><option value="backlog">Propuestas</option><option value="queued">Cola</option><option value="in_progress">En curso</option><option value="blocked">Bloqueadas</option><option value="review">En revisión</option><option value="done">Hechas</option><option value="cancelled">Canceladas</option><option value="all">Todos</option></select></label>
+          <label class="compact-field"><span>Estado</span><select id="status-filter"><option value="">Todos salvo cancelados</option><option value="backlog">Propuestas</option><option value="queued">Cola</option><option value="in_progress">En curso</option><option value="blocked">Bloqueadas</option><option value="review">En revisión</option><option value="done">Hechas</option><option value="cancelled">Canceladas</option><option value="all">Todos</option></select></label>
           <div class="view-switch" role="group" aria-label="Vista">
             <button class="is-active" type="button" data-display="board" aria-label="Tablero" title="Tablero">▦</button>
             <button type="button" data-display="list" aria-label="Lista" title="Lista">☷</button>
@@ -55,6 +56,12 @@
         </div>
         <div id="board" class="kanban" aria-live="polite"></div>
         <div id="ticket-list" class="ticket-list" hidden></div>
+      </section>
+
+      <section id="executions-view" class="page-view" hidden>
+        <div class="section-actions"><p>Historial de ejecuciones locales configuradas explícitamente. Una ejecución enviada termina en revisión humana.</p><button class="button button-quiet" id="refresh-executions-button" type="button">Actualizar</button></div>
+        <div id="execution-overview"></div>
+        <div id="runs-list" class="runs-list"></div>
       </section>
 
       <section id="profiles-view" class="page-view" hidden>

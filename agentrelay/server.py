@@ -1,6 +1,6 @@
 """Loopback web interface. Domain rules are shared with the MCP transport.
 
-The service intentionally has no subprocess or arbitrary file-read endpoints.
+Optional execution uses only workers from a trusted startup configuration.
 Browser writes require a custom header and a same-origin request. This protects
 against drive-by web pages, not other programs running as the local OS user.
 """
@@ -23,18 +23,31 @@ MAX_BODY = 1_048_576
 class AppServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], store: Store, demo: bool = False):
+    def __init__(self, address: tuple[str, int], store: Store, demo: bool = False, execution=None):
         self.store = store
         self.demo = demo
+        self.execution = execution
         super().__init__(address, Handler)
 
     def snapshot(self) -> dict:
-        return {**self.store.state(), "demo": self.demo, "version": __version__}
+        state = self.store.state()
+        runs = state.pop("runs")
+        execution = self.execution.snapshot() if self.execution else {"enabled": False, "workers": []}
+        # Ticket and run statuses come from the same SQLite read transaction.
+        execution["runs"] = runs
+        return {**state, "demo": self.demo or state["demo"], "version": __version__, "execution": execution}
+
+    def server_close(self):
+        try:
+            if self.execution:
+                self.execution.close()
+        finally:
+            super().server_close()
 
 
 class Handler(BaseHTTPRequestHandler):
     server: AppServer
-    server_version = "AgentRelay/0.1"
+    server_version = "AgentRelay/0.2"
 
     def log_message(self, fmt, *args):
         logging.getLogger("agentrelay.http").info(fmt, *args)
@@ -127,7 +140,20 @@ class Handler(BaseHTTPRequestHandler):
             if payload.get("actor", "human") != "human":
                 self._json(403, {"error": "La interfaz representa a human. Los agentes deben usar MCP."})
                 return
-            result = self.server.store.action(payload["action"], payload["data"], actor="human")
+            action, data = payload["action"], payload["data"]
+            if action in {"start_run", "cancel_run"}:
+                if self.server.execution is None:
+                    raise DomainError("Ejecución desactivada. Inicia el servidor con --workers.", 409)
+                if action == "start_run":
+                    if not isinstance(data.get("ticket_id"), str) or not isinstance(data.get("worker_id"), str) or type(data.get("expected_revision")) is not int:
+                        raise DomainError("Se requieren ticket_id, worker_id y expected_revision.")
+                    result = self.server.execution.start(data["ticket_id"], data["worker_id"], data["expected_revision"])
+                else:
+                    if not isinstance(data.get("run_id"), str):
+                        raise DomainError("Se requiere run_id.")
+                    result = self.server.execution.cancel(data["run_id"])
+            else:
+                result = self.server.store.action(action, data, actor="human")
             self._json(200, {"result": result, "state": self.server.snapshot()})
         except (ValueError, UnicodeError) as exc:
             self._json(400, {"error": "JSON o longitud de petición inválidos."})
@@ -141,8 +167,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json(403, {"error": "CORS no habilitado. Usa la interfaz local o MCP."})
 
 
-def serve(store: Store, port: int = 8787, demo: bool = False):
-    with AppServer(("127.0.0.1", port), store, demo) as server:
+def serve(store: Store, port: int = 8787, demo: bool = False, execution=None):
+    with AppServer(("127.0.0.1", port), store, demo, execution) as server:
         print(f"AgentRelay {__version__} · http://127.0.0.1:{server.server_port}", flush=True)
         print("Datos ficticios de demostración" if demo else "Espacio de trabajo local", flush=True)
         try:

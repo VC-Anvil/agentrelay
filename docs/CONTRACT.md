@@ -1,6 +1,6 @@
-# AgentRelay v0.1 contract
+# AgentRelay v0.2 contract
 
-Local-first ticket coordination for human and external agents. SQLite is authoritative. No inference or autonomous process launcher is implied. UI language Spanish; source/docs English. Default host 127.0.0.1:8787. Root owns integration, HTTP, MCP, docs and packaging; backend owner owns store.py and test_store.py; frontend owner owns static/*.
+Local-first ticket coordination for humans, external agents and explicitly configured workers. SQLite is authoritative. UI language Spanish; source/docs English. Default host 127.0.0.1:8787. Root owns integration, HTTP, MCP, adapters, docs and packaging; execution specialist owns execution.py/test_execution.py; frontend owner owns static/*.
 
 ## HTTP
 
@@ -8,7 +8,9 @@ Local-first ticket coordination for human and external agents. SQLite is authori
 - GET /api/tickets/{id}/context -> {ticket, parent, dependencies, children, events, instructions}. Includes evidence/checkpoint, blocked readiness.
 - POST /api/actions -> {action: string, actor: string, data: object}; returns {result: object, state: State}. actor defaults human in UI. Action errors HTTP 400 (validation), 404, 409 (conflict). JSON error {error: string}. All mutations via this endpoint. UI sends expected_revision on update and lifecycle actions.
 - GET /api/export -> complete versioned JSON export.
-- GET /api/health -> {status: 'ok', version: '0.1.0'}.
+- GET /api/health -> {status: 'ok', version: '0.2.0'}.
+- State also contains `demo`, `version`, and `execution: {enabled, workers, runs}`. Run and ticket statuses are read in one SQLite snapshot. Workers expose only id/name/model/effort/profile_ids/timeout_seconds. Run fields: id/ticket_id/worker_id/status/started_at/finished_at/summary/error/model/effort, newest 100.
+- POST actions `start_run {ticket_id,worker_id,expected_revision}` and `cancel_run {run_id}` require startup `--workers`. Normal result/state envelope applies. Execution protocol and failure statuses are in [EXECUTION.md](EXECUTION.md).
 
 ## Ticket fields
 

@@ -1,4 +1,4 @@
-param([switch]$Demo, [int]$Port = 8787)
+param([switch]$Demo, [int]$Port = 8787, [string]$Workers, [string]$Db)
 $ErrorActionPreference = 'Stop'
 $taskRoot = $PSScriptRoot
 $taskPython = Join-Path $taskRoot '.runtime\Scripts\python.exe'
@@ -14,6 +14,14 @@ try {
 }
 $taskArgs = @('-X', 'utf8', '-m', 'agentrelay', 'serve', '--port', "$Port")
 if ($Demo) { $taskArgs += '--demo' }
+if ($Workers) {
+    $taskWorkerPath = (Resolve-Path -LiteralPath $Workers).Path
+    $taskArgs += @('--workers', ('"' + $taskWorkerPath + '"'))
+}
+if ($Db) {
+    $taskDatabasePath = [System.IO.Path]::GetFullPath($Db)
+    $taskArgs += @('--db', ('"' + $taskDatabasePath + '"'))
+}
 $taskChild = Start-Process -FilePath $taskPython -ArgumentList $taskArgs -WorkingDirectory $taskRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $taskData "web-$Port.out.log") -RedirectStandardError (Join-Path $taskData "web-$Port.err.log") -PassThru
 $taskChild.Id | Set-Content -LiteralPath (Join-Path $taskData "web-$Port.pid")
 Write-Host "AgentRelay: http://127.0.0.1:$Port (PID $($taskChild.Id))"
