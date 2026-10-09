@@ -22,6 +22,9 @@ def main():
     snapshot.add_argument("--output", type=Path, required=True)
     verify = sub.add_parser("verify-snapshot", help="Check the bytes of a captured input bundle")
     verify.add_argument("directory", type=Path)
+    compare = sub.add_parser("compare-snapshot", help="Compare captured inputs with an explicit current source root")
+    compare.add_argument("directory", type=Path)
+    compare.add_argument("--root", type=Path, required=True)
     for name in ("serve", "mcp", "export", "run", "backup", "action", "context"):
         command = sub.add_parser(name)
         command.add_argument("--db", type=Path, help="SQLite database shared by web and MCP")
@@ -61,14 +64,21 @@ def main():
                 if workspace.execution:
                     workspace.execution.close()
         return
-    if args.command in {"snapshot", "verify-snapshot"}:
+    if args.command in {"snapshot", "verify-snapshot", "compare-snapshot"}:
         from .snapshots import create_snapshot, verify_snapshot
         try:
-            result = (create_snapshot(args.root, args.files, args.output) if args.command == "snapshot"
-                      else verify_snapshot(args.directory))
+            if args.command == "compare-snapshot":
+                from .freshness import compare_snapshot
+                result = compare_snapshot(args.directory, args.root)
+            else:
+                result = (create_snapshot(args.root, args.files, args.output) if args.command == "snapshot"
+                          else verify_snapshot(args.directory))
             print(json.dumps(result, ensure_ascii=False, indent=2))
             if args.command == "verify-snapshot" and not result["valid"]:
                 raise SystemExit(1)
+            if args.command == "compare-snapshot" and any(
+                    result["summary"][key] for key in ("modified", "missing", "uncheckable")):
+                raise SystemExit(2)
         except (ValueError, OSError) as exc:
             parser.exit(1, f"Snapshot failed: {exc}\n")
         return

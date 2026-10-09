@@ -13,6 +13,8 @@
   const PRIORITY = { urgent: "Urgente", high: "Alta", normal: "Normal", low: "Baja" };
   const TYPE = { objective: "Objetivo", task: "Tarea", bug: "Error", research: "Investigación", review: "Revisión", help: "Ayuda" };
   const ACTION = {
+    create_plan: "Plan importado",
+    create_plan_ticket: "Propuesta del plan creada",
     create_ticket: "Tarea creada",
     update_ticket: "Tarea actualizada",
     transition: "Estado cambiado",

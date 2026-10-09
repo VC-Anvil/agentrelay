@@ -51,6 +51,21 @@ class CliTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse(self.db.exists())
 
+    def test_example_plan_retries_after_restart_and_backup(self):
+        example = Path(__file__).resolve().parents[1] / "examples" / "plan.json"
+        request = json.loads(example.read_text(encoding="utf-8"))
+        first = self.action(request["action"], request["data"], "agent:planner")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        second = self.action(request["action"], request["data"], "agent:planner")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(json.loads(first.stdout), json.loads(second.stdout))
+        backup = self.root / "backup.sqlite"
+        saved = self.command("backup", "--db", self.db, "--output", backup)
+        self.assertEqual(saved.returncode, 0, saved.stderr)
+        restored = self.command("action", "--db", backup, "--actor", "agent:planner", "--input", example)
+        self.assertEqual(restored.returncode, 0, restored.stderr)
+        self.assertEqual(json.loads(first.stdout), json.loads(restored.stdout))
+
     def test_snapshot_commands_do_not_create_default_database(self):
         source = self.root / "source"
         source.mkdir()
@@ -61,6 +76,15 @@ class CliTests(unittest.TestCase):
         verified = self.command("verify-snapshot", destination)
         self.assertEqual(verified.returncode, 0, verified.stderr)
         self.assertTrue(json.loads(verified.stdout)["valid"])
+        compared = self.command("compare-snapshot", destination, "--root", source)
+        self.assertEqual(compared.returncode, 0, compared.stderr)
+        self.assertEqual(json.loads(compared.stdout)["summary"]["unchanged"], 1)
+        (source / "notes.txt").write_bytes(b"current source differs")
+        compared = self.command("compare-snapshot", destination, "--root", source)
+        self.assertEqual(compared.returncode, 2, compared.stderr)
+        self.assertEqual(json.loads(compared.stdout)["summary"]["modified"], 1)
+        self.assertNotEqual(self.command("compare-snapshot", destination).returncode, 0)
         (destination / "files" / "notes.txt").write_bytes(b"changed")
         self.assertNotEqual(self.command("verify-snapshot", destination).returncode, 0)
+        self.assertEqual(self.command("compare-snapshot", destination, "--root", source).returncode, 1)
         self.assertEqual(sorted(p.name for p in source.iterdir()), ["notes.txt"])

@@ -115,6 +115,10 @@ ticket; creating follow-up tickets does not mean their implementation is done.
 
 ## Private pilot data
 
+Use [atomic plan imports and source comparison](PLANS_AND_FRESHNESS.md) when a
+review produces several related proposals or the source project continues changing.
+Comparisons preserve earlier accepted evidence; they never automatically restart work.
+
 Keep real source bundles, project databases, worker configs and reports under an
 ignored local directory such as `.agentrelay/pilots/`. Public product evidence can
 describe the workflow and aggregate results without publishing private inputs.

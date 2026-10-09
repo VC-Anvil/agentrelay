@@ -1,0 +1,34 @@
+{
+  "action": "create_plan",
+  "data": {
+    "request_id": "example-document-review-v1",
+    "tickets": [
+      {
+        "key": "review",
+        "title": "Review the captured project plan",
+        "description": "Check the proposal against the exact source snapshot and record remaining uncertainty.",
+        "type": "review",
+        "profile_id": "sol",
+        "parent_key": "objective",
+        "depends_on_keys": ["capture"],
+        "acceptance": ["Every conclusion cites a captured source", "Unverified claims remain explicit"]
+      },
+      {
+        "key": "objective",
+        "title": "Prepare a traceable project review",
+        "type": "objective",
+        "profile_id": "astra",
+        "acceptance": ["Inputs and independent review are recorded"]
+      },
+      {
+        "key": "capture",
+        "title": "Capture the authorized review inputs",
+        "description": "Choose explicit documents, freeze them outside the source tree and verify their manifest.",
+        "parent_key": "objective",
+        "profile_id": "luna",
+        "priority": "high",
+        "acceptance": ["Snapshot verification succeeds", "Source files are unchanged"]
+      }
+    ]
+  }
+}

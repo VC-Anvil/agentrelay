@@ -25,6 +25,27 @@ Parent-to-child edges and explicit dependency edges form one execution graph for
 
 Submission records evidence and enters review. Completion needs all criteria explicitly accepted, dependencies resolved, and a reviewer identity different from the assignee. These rules protect workflow integrity; they do not prove an artifact is correct or establish cryptographic identity.
 
+Plan imports validate and create the full graph in the same write transaction.
+`plan_requests` stores the actor, canonical payload hash and original result;
+retries return that receipt without generating more tickets or events. SQLite
+backup includes these receipts. A creation receipt is not a current context read.
+
+## Projects and captured inputs
+
+A trusted startup registry maps project IDs to existing databases and optional
+worker configurations. Each request selects its own workspace; the server has no
+shared mutable selected-project state. The browser ignores responses belonging to
+an earlier project or stale request generation. Cross-project source-file locking
+and dependencies are not provided.
+
+Explicit input snapshots preserve selected files and an unsigned hash manifest
+outside their source tree. Adapters can receive verified snapshot text when
+explicitly configured, without expanding provider file permissions. Freshness
+comparison reads an explicitly supplied current root; manifest provenance never
+selects that root. Neither operation executes source text or automatically changes
+ticket acceptance. File reads are bounded and checked individually, not atomic
+across a changing project. See [pilot workflow](PROJECT_PILOTS.md).
+
 ## Trust model
 
 Single trusted local OS user. HTTP uses loopback only, a Host allowlist, same-origin checks, a required custom mutation header and a static asset allowlist. No public serving, CORS or arbitrary file-reading endpoint. Execution requests choose an existing configured worker, never a command. The browser always acts as `human`; MCP identity comes from its command-line configuration. Another program with access to the database can bypass application rules, so this is not a security boundary against the local user or a malicious installed agent.

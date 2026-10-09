@@ -1,4 +1,4 @@
-# AgentRelay v0.3 contract
+# AgentRelay v0.4 contract
 
 Local-first ticket coordination for humans, external agents and explicitly configured workers. SQLite is authoritative. UI language Spanish; source/docs English. Default host 127.0.0.1:8787. Root owns integration, HTTP, MCP, adapters, docs and packaging; execution specialist owns execution.py/test_execution.py; frontend owner owns static/*.
 
@@ -8,7 +8,7 @@ Local-first ticket coordination for humans, external agents and explicitly confi
 - GET /api/tickets/{id}/context -> {ticket, parent, dependencies, children, events, instructions, profile, profiles}. Includes evidence/checkpoint, blocked readiness, recommended target profile (or null) and the profile catalog for help routing in the same read transaction. Recommendations are not execution attestations.
 - POST /api/actions -> {action: string, actor: string, data: object}; returns {result: object, state: State}. actor defaults human in UI. Action errors HTTP 400 (validation), 404, 409 (conflict). JSON error {error: string}. All mutations via this endpoint. UI sends expected_revision on update and lifecycle actions.
 - GET /api/export -> complete versioned JSON export.
-- GET /api/health -> {status: 'ok', version: '0.3.0'}.
+- GET /api/health -> {status: 'ok', version: '0.4.0'}.
 - GET /api/workspaces -> {workspaces:[{id,name,database,demo}],default_workspace_id}. Trusted startup registry only; no browser path input or registry mutation. Multi-project state/context/export/actions require X-AgentRelay-Workspace with a registered ID; missing is 400 and unknown is 404. Single-project requests remain compatible without it. State, context and HTTP export include workspace identity.
 - State also contains `demo`, `version`, and `execution: {enabled, workers, runs}`. Run and ticket statuses are read in one SQLite snapshot. Workers expose only id/name/model/effort/profile_ids/timeout_seconds. Run fields: id/ticket_id/worker_id/status/started_at/finished_at/summary/error/model/effort, newest 100.
 - POST actions `start_run {ticket_id,worker_id,expected_revision}` and `cancel_run {run_id}` require startup `--workers`. Normal result/state envelope applies. Execution protocol and failure statuses are in [EXECUTION.md](EXECUTION.md).
@@ -24,6 +24,7 @@ id string, name string, role string, provider string, model string, effort strin
 ## Actions and data
 
 - create_ticket: title required; all editable fields optional. Defaults task/queued/normal; no arbitrary initial completed status. acceptance recommended.
+- create_plan: exact envelope `{request_id,tickets}`; request_id nonempty <=128 characters, tickets 1..64 entries. Each entry has unique `key` <=64 characters, create_ticket fields, optional `parent_key`, `depends_on_keys`, and `status` (backlog default or queued). Local references may point forward. `parent_key` and `parent_id` are mutually exclusive; external `depends_on` may combine with local keys, without duplicates. Identifiers reject surrounding whitespace. Returns `{request_id,key_to_id,tickets}`. One transaction creates the entire validated graph and audit events; any failure rolls everything back. Same ID/actor/canonical JSON payload returns the original receipt, even after restart, without new events. Different actor/payload conflicts (409). The receipt is not current ticket context. No execution or automatic review. See [plans and freshness](PLANS_AND_FRESHNESS.md).
 - update_ticket: id, expected_revision required, any title, description, type, priority, parent_id, depends_on, profile_id, acceptance, checkpoint. State changes use transition/claim/submit/complete. Cannot weaken acceptance while in progress/review/done. Completed task must reopen before editing deliverable scope.
 - transition: id, expected_revision, status (backlog|queued|blocked|cancelled), reason optional. Reject in_progress/review/done here. blocked needs reason; reopening done requires reason. Clearing assignee on queue/cancel. Dependencies alone should produce derived blockers, not silently erase manual blocked state.
 - claim_ticket: id, expected_revision, assignee required, actual_model, actual_effort optional. Only queued ready tickets; atomic; child objective not executable until children resolved. actor agent should match assignee.

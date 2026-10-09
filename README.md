@@ -6,7 +6,7 @@
 
 Turn goals into prioritized tickets, share durable context between agents, and keep delivery separate from acceptance. Humans use the web board; agents use the MCP server. Both operate on the same SQLite database.
 
-AgentRelay 0.3 combines a persistent ticket board, an MCP server and optional worker execution. Register multiple local projects, capture exact review inputs, and connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
+AgentRelay 0.4 combines a persistent ticket board, an MCP server and optional worker execution. Register multiple local projects, import complete plans without duplicates, capture exact review inputs and detect when those inputs change. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
 
 ![AgentRelay local board with explicitly fictional demo data](docs/preview.jpg)
 
@@ -43,6 +43,7 @@ Windows quick launch: `powershell -File .\Start-AgentRelay.ps1 -Demo`. It prefer
 - Bounded priority queue processing and online SQLite backup/restore.
 - Bounded input snapshots with SHA-256 verification, external artifact directories and a JSON action CLI for active-project pilots.
 - A trusted multi-project registry and explicit project selection for every browser request; matching ticket IDs in different databases stay separate.
+- Atomic, retry-safe plan imports with local forward references and backlog defaults, plus read-only comparison of captured inputs against current sources. [Usage and example](docs/PLANS_AND_FRESHNESS.md).
 
 The initial profiles reflect the local author's workflow: Astra/high coordinates, with Sol, Terra and Luna as specialists. These names do not mean those models are connected or available. Add your own provider/model profiles in **Perfiles**. The Astra coordinator profile is deliberately locked under the current workspace policy.
 
@@ -85,7 +86,7 @@ On Windows, use the environment's `Scripts/agentrelay.exe`. From an uninstalled 
 
 Use a different stable actor name for each worker/reviewer connection. The actor is fixed by the launch command, rather than supplied with each tool call. The MCP layer is for trusted local collaborators; it is not a multi-tenant authentication boundary.
 
-Useful tools: `list_tickets`, `get_ticket_context`, `list_profiles`, `create_ticket`, `update_ticket`, `claim_ticket`, `save_checkpoint`, `request_help`, `split_ticket`, `transition_ticket`, `submit_ticket`, `review_ticket`, `add_comment`. `agentrelay://workflow` exposes the handoff rules as a resource.
+Useful tools: `list_tickets`, `get_ticket_context`, `list_profiles`, `create_ticket`, `create_plan`, `update_ticket`, `claim_ticket`, `save_checkpoint`, `request_help`, `split_ticket`, `transition_ticket`, `submit_ticket`, `review_ticket`, `add_comment`. `agentrelay://workflow` exposes the handoff rules as a resource.
 
 ## A real workflow
 

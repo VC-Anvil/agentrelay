@@ -68,6 +68,19 @@ def create_mcp(store: Store, actor: str) -> FastMCP:
                                     "depends_on": depends_on or [], "profile_id": profile_id})
 
     @server.tool(annotations=write)
+    def create_plan(request_id: str, tickets: list[dict]) -> dict:
+        """Atomically create up to 64 authorized tasks, in backlog unless explicitly queued.
+
+        Each entry needs key and title; ordinary create_ticket fields are accepted.
+        Use parent_key and depends_on_keys to reference entries in this same plan,
+        including later entries. Reuse exactly this request_id and payload after an
+        uncertain response to recover the original result without duplicates.
+        Changing actor or payload for a used request_id conflicts. Never executes
+        tasks or approves their results. Read current context before later edits.
+        """
+        return act("create_plan", {"request_id": request_id, "tickets": tickets})
+
+    @server.tool(annotations=write)
     def update_ticket(ticket_id: str, expected_revision: int, changes: dict) -> dict:
         """Edit scope/relations/recommended profile. Cannot bypass lifecycle or weaken active acceptance."""
         return act("update_ticket", {**changes, "id": ticket_id, "expected_revision": expected_revision})

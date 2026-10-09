@@ -64,6 +64,24 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.request("GET", "/%2e%2e/README.md")[0], 404)
         self.assertEqual(self.store.state()["tickets"], [])
 
+    def test_plan_retry_and_conflict_are_visible_through_http(self):
+        request = {"action": "create_plan", "data": {"request_id": "browser-plan", "tickets": [
+            {"key": "child", "title": "Review inputs", "parent_key": "objective"},
+            {"key": "objective", "title": "Review project", "type": "objective"}]}}
+        status, body, _ = self.request("POST", "/api/actions", request)
+        self.assertEqual(status, 200, body)
+        created = json.loads(body)
+        self.assertEqual(len(created["state"]["tickets"]), 2)
+        self.assertTrue(all(t["status"] == "backlog" for t in created["state"]["tickets"]))
+        status, body, _ = self.request("POST", "/api/actions", request)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(json.loads(body)["result"], created["result"])
+        self.assertEqual(len(json.loads(body)["state"]["events"]), 3)
+        request["data"]["tickets"][0]["title"] = "Different task"
+        status, body, _ = self.request("POST", "/api/actions", request)
+        self.assertEqual(status, 409, body)
+        self.assertEqual(len(self.store.state()["tickets"]), 2)
+
     def test_malformed_request_and_missing_ticket_are_actionable(self):
         self.assertEqual(self.request("POST", "/api/actions", [1, 2])[0], 400)
         status, body, _ = self.request("GET", "/api/tickets/AR-9999/context")

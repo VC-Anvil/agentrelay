@@ -28,6 +28,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(initialized.serverInfo.name, "AgentRelay")
                     tools = await client.list_tools()
                     self.assertIn("request_help", {t.name for t in tools.tools})
+                    self.assertIn("create_plan", {t.name for t in tools.tools})
 
                     async def call(name, args):
                         result = await client.call_tool(name, args)
@@ -36,6 +37,15 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                             return result.structuredContent
                         return json.loads(result.content[0].text)
 
+                    proposal = {"request_id": "mcp-plan-test", "tickets": [
+                        {"key": "child", "title": "Proposed child", "parent_key": "parent"},
+                        {"key": "parent", "title": "Proposed objective", "type": "objective"}]}
+                    receipt = await call("create_plan", proposal)
+                    self.assertEqual(await call("create_plan", proposal), receipt)
+                    self.assertEqual(len(store.state()["tickets"]), 2)
+                    self.assertTrue(all(t["status"] == "backlog" for t in store.state()["tickets"]))
+                    conflict = await client.call_tool("create_plan", {**proposal, "tickets": [{"key": "new", "title": "Different"}]})
+                    self.assertTrue(conflict.isError)
                     task = await call("create_ticket", {"title": "Protocol exercise", "description": "Test handoff across UI/store and MCP", "acceptance": ["A concrete result is independently reviewed"]})
                     task = await call("claim_ticket", {"ticket_id": task["id"], "expected_revision": task["revision"], "actual_model": "protocol-test-no-llm", "actual_effort": "none"})
                     self.assertEqual(task["assignee"], "agent:integration-test")

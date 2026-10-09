@@ -7,6 +7,7 @@ decision; references in ``evidence`` are never treated as verified facts.
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -122,6 +123,10 @@ class Store:
                     action TEXT NOT NULL, details TEXT NOT NULL, created_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS plan_requests (
+                    request_id TEXT PRIMARY KEY, actor TEXT NOT NULL,
+                    payload_hash TEXT NOT NULL, result TEXT NOT NULL
+                );
             """)
             for row in DEFAULT_PROFILES:
                 db.execute("INSERT OR IGNORE INTO profiles VALUES (?,?,?,?,?,?,?,?,?)",
@@ -360,7 +365,7 @@ class Store:
             raise DomainError("title is required")
         return out
 
-    def _insert_ticket(self, db, fields, actor, action="create_ticket"):
+    def _insert_ticket(self, db, fields, actor, action="create_ticket", *, record_event=True):
         fields = self._normalize_ticket_fields(db, fields, creating=True)
         ticket_id, now = self._next_ticket_id(db), _utc()
         db.execute("""INSERT INTO tickets
@@ -375,8 +380,104 @@ class Store:
             db.execute("INSERT INTO dependencies VALUES (?,?)", (ticket_id, dep))
         self._check_graph(db)
         created = self._ticket(db, ticket_id)
-        self._event(db, ticket_id, actor, action, {"after": created})
+        if record_event:
+            self._event(db, ticket_id, actor, action, {"after": created})
         return created
+
+    @staticmethod
+    def _plan_identifier(value, name, limit):
+        if (not isinstance(value, str) or not value or value != value.strip()
+                or len(value) > limit):
+            raise DomainError(f"{name} must be a nonempty string up to {limit} characters without surrounding whitespace")
+        return value
+
+    def _create_plan(self, db, data, actor):
+        if set(data) != {"request_id", "tickets"}:
+            raise DomainError("create_plan requires request_id and tickets only")
+        request_id = self._plan_identifier(data["request_id"], "request_id", 128)
+        entries = data["tickets"]
+        if not isinstance(entries, list) or not 1 <= len(entries) <= 64:
+            raise DomainError("tickets must contain 1 to 64 entries")
+        try:
+            canonical = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            payload_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        except (TypeError, ValueError, UnicodeError) as exc:
+            raise DomainError("create_plan data must be JSON-compatible") from exc
+        prior = db.execute("SELECT actor,payload_hash,result FROM plan_requests WHERE request_id=?",
+                           (request_id,)).fetchone()
+        if prior is not None:
+            if prior["actor"] != actor or prior["payload_hash"] != payload_hash:
+                raise DomainError("request_id already used with different actor or payload", 409)
+            return json.loads(prior["result"])
+
+        allowed = EDITABLE | {"key", "parent_key", "depends_on_keys", "status"}
+        keys = set()
+        for entry in entries:
+            if not isinstance(entry, dict) or set(entry) - allowed:
+                raise DomainError("invalid create_plan ticket fields")
+            key = self._plan_identifier(entry.get("key"), "key", 64)
+            if key in keys:
+                raise DomainError("duplicate create_plan key")
+            keys.add(key)
+            if "parent_key" in entry and "parent_id" in entry:
+                raise DomainError("parent_key and parent_id are mutually exclusive")
+            _choice(entry.get("status", "backlog"), {"backlog", "queued"}, "status")
+            if "parent_key" in entry:
+                self._plan_identifier(entry["parent_key"], "parent_key", 64)
+            if "depends_on_keys" in entry:
+                _strings(entry["depends_on_keys"], "depends_on_keys")
+                for dep_key in entry["depends_on_keys"]:
+                    self._plan_identifier(dep_key, "depends_on_keys item", 64)
+        for entry in entries:
+            if "parent_key" in entry and entry["parent_key"] not in keys:
+                raise DomainError(f"parent_key {entry['parent_key']} not found")
+            for dep_key in entry.get("depends_on_keys", []):
+                if dep_key not in keys:
+                    raise DomainError(f"depends_on_keys item {dep_key} not found")
+
+        existing_ids = {row[0] for row in db.execute("SELECT id FROM tickets")}
+        for entry in entries:
+            parent_id = _optional_text(entry.get("parent_id"), "parent_id")
+            if parent_id is not None and parent_id not in existing_ids:
+                raise DomainError(f"existing parent ticket {parent_id} not found", 404)
+            for dep_id in _strings(entry.get("depends_on", []), "depends_on"):
+                if dep_id not in existing_ids:
+                    raise DomainError(f"existing dependency ticket {dep_id} not found", 404)
+
+        key_to_id = {}
+        for entry in entries:
+            base = {field: value for field, value in entry.items() if field in EDITABLE
+                    and field not in {"parent_id", "depends_on"}}
+            created = self._insert_ticket(db, base, actor, record_event=False)
+            key_to_id[entry["key"]] = created["id"]
+
+        for entry in entries:
+            ticket_id = key_to_id[entry["key"]]
+            parent_id = (key_to_id[entry["parent_key"]] if "parent_key" in entry
+                         else _optional_text(entry.get("parent_id"), "parent_id"))
+            dependencies = (_strings(entry.get("depends_on", []), "depends_on")
+                            + [key_to_id[key] for key in entry.get("depends_on_keys", [])])
+            if len(dependencies) != len(set(dependencies)):
+                raise DomainError("resolved dependencies contain duplicates")
+            full = {field: value for field, value in entry.items() if field in EDITABLE
+                    and field not in {"parent_id", "depends_on"}}
+            full["parent_id"] = parent_id
+            full["depends_on"] = dependencies
+            normalized = self._normalize_ticket_fields(db, full, creating=True)
+            db.execute("UPDATE tickets SET parent_id=?,status=? WHERE id=?",
+                       (normalized["parent_id"], entry.get("status", "backlog"), ticket_id))
+            for dep_id in normalized["depends_on"]:
+                db.execute("INSERT INTO dependencies VALUES (?,?)", (ticket_id, dep_id))
+        self._check_graph(db)
+        tickets = [self._ticket(db, key_to_id[entry["key"]]) for entry in entries]
+        result = {"request_id": request_id, "key_to_id": key_to_id, "tickets": tickets}
+        for entry, ticket in zip(entries, tickets):
+            self._event(db, ticket["id"], actor, "create_plan_ticket",
+                        {"request_id": request_id, "key": entry["key"], "after": ticket})
+        self._event(db, None, actor, "create_plan", {"request_id": request_id, "key_to_id": key_to_id})
+        db.execute("INSERT INTO plan_requests(request_id,actor,payload_hash,result) VALUES(?,?,?,?)",
+                   (request_id, actor, payload_hash, _json(result)))
+        return result
 
     def _update_row(self, db, ticket_id, changes):
         changes = {**changes, "updated_at": _utc()}
@@ -609,6 +710,8 @@ class Store:
             raise DomainError("data must be an object")
         actor = _nonempty(actor, "actor")
         with self._write() as db:
+            if action == "create_plan":
+                return self._create_plan(db, data, actor)
             if action == "create_ticket":
                 return self._insert_ticket(db, data, actor)
             if action == "update_ticket":

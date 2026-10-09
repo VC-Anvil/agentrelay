@@ -1,109 +1,99 @@
-# Validation — AgentRelay 0.3.0
+# Validation — AgentRelay 0.4.0
 
-Date: 2026-10-09. Windows, Python 3.12.14, MCP Python SDK 1.30.0,
-Codex CLI 0.162.0-alpha.2. Earlier evidence is preserved in
-[v0.2 validation](VALIDATION_0_2.md) and [v0.1 browser evidence](VALIDATION_0_1.md).
+Date: 2026-10-09. Windows, Python 3.12.14, MCP Python SDK 1.30.0.
+Earlier evidence: [v0.3 active-project pilots](VALIDATION_0_3.md),
+[v0.2 execution](VALIDATION_0_2.md), [v0.1 browser review](VALIDATION_0_1.md).
 
-## Real active-project pilots
+## Changes from observed use
 
-Four private, separate project databases were used for documentary reviews while
-the source projects continued in their own sessions. The pilot did not edit their
-sources, launch builds/emulators, message their sessions or certify their games.
-All source bundles, configs, receipts and reports remain ignored under
-`.agentrelay/pilots/`; this public report does not redistribute those inputs.
+The four real project pilots exposed two coordination needs: creating a related
+plan should not leave partial tasks after a validation error, and reviewers need
+to distinguish captured evidence from source files that may have changed later.
 
-- Six actual Codex runs, configured `gpt-6-sol` / `high`, read-only sandbox:
-  one requested help, five submitted reports (including one corrected attempt).
-- In the first run, the host policy rejected file-reading commands. The worker
-  honestly requested help and blocked its ticket. After explicit owner authorization,
-  AgentRelay supplied verified snapshot text without changing the sandbox. A separate
-  reviewer accepted the help before the original ticket was explicitly requeued.
-- Independent inspection rejected one report's model recommendation because it
-  contradicted that project's current policy. The pilot profiles and source context
-  were corrected, and a second report was reviewed. The original attempt remains in
-  the audit history. A separate false-positive review observation was explicitly
-  withdrawn after checking the exact excerpt; it was not silently erased.
-- Four documentary review tickets were accepted after inspecting their sources,
-  limits and saved reports. The integrator created five proposed follow-ups per
-  project, with priorities, profiles, acceptance, parentage and dependencies.
-- A different reviewer checked all four snapshot/manifest/report identities,
-  proposal graphs and model-policy handling, then accepted the four pilot objectives.
-  The twenty proposed game tasks and their four parent objectives remain in backlog.
-  None was executed or synchronized into the game development sessions.
+`create_plan` creates an entire bounded graph transactionally, including local
+forward references. Its persisted request receipt makes retries safe after lost
+responses, restarts and SQLite backup/restore. Proposals default to backlog. It
+never launches a worker or approves a ticket.
 
-The private trace includes `index.json`, `review-summary.json`, the per-project
-`reviewed-plan.json`, and `independent-review.md`. These demonstrate one bounded
-documentary workflow, not general autonomous coding performance or token savings.
-Provider model fields are configured declarations, not independent attestation.
+`compare-snapshot` verifies captured bytes before inspecting the explicitly chosen
+current root. It reports unchanged, modified, missing and uncheckable files with
+sizes, hashes and reasons. Metadata paths do not select the current directory.
 
-## Product changes driven by the pilots
+The comparison was used against the original captures of four projects:
+all **12 selected files matched** at 2026-10-09 21:56 UTC. No drift-review proposals
+were needed. This says nothing about unlisted files or later changes. One provider
+had received derived excerpts; its original source capture was used for the live
+comparison, rather than mistaking unchanged staged excerpts for a current project.
+Private evidence remains in `.agentrelay/pilots/freshness-summary.json` and the
+per-project comparison files. Source projects were only read.
 
-Input snapshots preserve exact selected bytes and SHA-256 provenance. The first
-real capture exposed Python 3.12 Windows path-stat versus descriptor-stat `ctime`
-differences; the implementation and regression test now account for that without
-discarding identity, size or modification-time checks. Captures are explicitly
-non-atomic across multiple files and unsigned manifests are not authentication.
+AgentRelay also tracks this iteration in its private development database.
+The coordinator imported the integration/review graph and replayed the request:
+the same ticket IDs were returned without duplicate tasks. Implementation,
+integration and independent review remain separate responsibilities.
 
-External artifact directories keep reports out of source projects. Explicit
-snapshot text delivery supports providers without file tools, with strict UTF-8,
-corruption checks and a 512 KiB context ceiling. Binary/oversized inputs fail before
-provider invocation. Receipts record input provenance; new snapshot deliveries also
-attach the receipt and hash the exact saved report bytes.
+## Checks
 
-Ticket context now includes profile recommendations and the help-routing catalog.
-A JSON action/context CLI uses the same revision and lifecycle checks; its output
-is UTF-8 on Windows pipes. A startup workspace registry keeps projects separate
-and binds requests to registered IDs, even when their ticket IDs are identical.
+The final complete local suite ran **81 tests in 17.710 seconds: 79 passed, two skipped**
+because this Windows account cannot create symbolic links. Log:
+`.agentrelay/v04-tests-final.log` (ignored). JavaScript syntax and whitespace checks passed.
 
-## Automated and independent checks
+New coverage includes forward references, rollback of tickets/events/counter,
+concurrent identical requests, conflicting payloads/actors, normalized external
+IDs, invalid Unicode and graph constraints. Real HTTP, MCP SDK stdio and CLI
+round trips cover plan import/replay and conflicts. The documented JSON example
+is exercised through a restarted CLI and restored SQLite backup.
 
-The final complete suite ran **62 tests in 16.089 seconds: 61 passed and one was
-explicitly skipped** because this Windows account cannot create the symlink needed
-by that case. Raw local log: `.agentrelay/v03-tests.log` (ignored). New tests cover input integrity and limits, adapter text supply and receipts,
-CLI conflicts and Unicode, cross-project HTTP isolation and execution-manager
-cleanup on startup failure. The actual MCP SDK stdio test is included. Fixtures
-do not call LLMs.
+Freshness checks cover same-size byte changes, disappearance, invalid/traversing
+manifests before source access, explicit root selection, changed snapshot identity,
+unsafe/nonregular paths, unstable reads and file/total limits. Failed reads reserve
+their observed size; each stable-file reader can inspect one additional byte to
+detect growth, bounded by the maximum 64 files. CLI tests distinguish a matching
+comparison, drift and invalid input through JSON results and exit codes.
 
-Independent code review found two within-project UI races: a stale poll could
-overwrite a confirmed mutation, and closing/reopening the same ticket could accept
-an old context response. Data generations and context-request identities now guard
-these paths; concurrent mutations are serialized in the UI. Four deterministic
-JavaScript race scenarios passed against the actual application functions, via
-the Node test included in the suite. A real two-manager HTTP/process fixture also
-passed: identical ticket/worker IDs remain isolated, cross-project cancellation
-returns 404, both reports land in their own database, and cancellation within the
-selected project works. JavaScript syntax and whitespace checks passed.
+Integration review found and corrected raw-versus-normalized external relations
+and an uncounted failed-read budget. A regression fixture initially created a real
+parent/dependency cycle; it was corrected to use independent existing tickets,
+preserving the product's rejection of deadlocks.
 
-The wheel and source archive built successfully. An isolated installation of the
-wheel verified version/import provenance, packaged static assets, snapshot
-capture/verification, the project registry and persistent tickets. Package and
-source-archive bytes were compared with the corresponding working files, including
-the JavaScript regression harness; private pilot directories were absent. Exact
-distribution hashes are saved in `dist/SHA256SUMS-0.3.0.txt`.
+Specialist sandboxes could not use normal Windows temporary paths; their reports
+distinguish those setup failures and patched diagnostics from the integrator's
+normal complete run above. No product sandbox was weakened. Test workers use local
+fixtures; these checks do not consume LLM inference.
 
-The [CI matrix](https://github.com/VC-Anvil/agentrelay/actions/workflows/tests.yml)
-records exact per-commit outcomes on Windows/Linux and Python 3.11/3.12.
+Independent review also reproduced an operating-system read error that aborted
+the entire comparison. The fix reports that file as uncheckable and continues;
+the new regression verifies another readable file is still compared. The reviewer
+checked the fix, and the complete suite above includes it.
 
-The first v0.3 CI run passed both Linux jobs but exposed five Windows assertions
-comparing an 8.3 TEMP alias with its canonical path; the other Windows job was
-cancelled by matrix fail-fast. The three affected fixtures now resolve their
-temporary roots, preserving exact path, content and isolation assertions. All
-eight affected tests passed locally; the corrective commit is checked in CI.
+The wheel and source distribution built successfully. An isolated wheel install
+verified source provenance, packaged assets, persistence, snapshot verification,
+freshness comparison, registry loading and plan replay. All 13 wheel package files
+matched the working source; source-archive code/tests/docs also matched, without
+private pilot data. Exact hashes are saved in `dist/SHA256SUMS-0.4.0.txt`.
 
-The reviewer sandbox could not open SQLite files under its own temporary directory;
-those setup failures are not counted as successful tests. The integrator's normal
-environment ran the actual suite above. No filesystem sandbox was weakened by the
-product. Specialist reports retain their environment limitations and test attempts.
+The owned local preview was restarted after checking that no pilot worker was
+running. Its health reports 0.4.0; API checks verified all four project databases
+and the separate development database under their registered identities.
 
-## Visual boundary and operational limits
+The previous corrective commit's [four CI jobs passed](https://github.com/VC-Anvil/agentrelay/actions/runs/37996024947)
+on Windows/Linux and Python 3.11/3.12. The
+[CI matrix](https://github.com/VC-Anvil/agentrelay/actions/workflows/tests.yml)
+records outcomes for each subsequent commit; pending runs are not acceptance.
 
-The board's earlier browser proof remains v0.1. The browser tool denied the previous
-local preview; the new multi-project preview awaits explicit browser permission and
-a fresh walkthrough. API checks and JavaScript syntax are not visual validation.
+## Boundaries
 
-One trusted local user; one manager/active worker per database. Multiple configured
-projects do not add shared-file locking across databases. No unattended scheduler,
-automatic acceptance, signed provenance, provider spend metering, GitHub Issues
-sync or public hosting. Inspect owned processes after a host crash before retrying.
+Plan receipts preserve creation-time revisions; clients must fetch current context
+before later edits. Idempotency is scoped to the database and declared actor, not
+multi-user authentication. JSON export remains an inspection report; SQLite backup
+preserves request receipts for restore.
 
-See [project-pilot setup](PROJECT_PILOTS.md) and [execution boundaries](EXECUTION.md).
+Snapshots are unsigned and do not provide an atomic multi-file view or protection
+against a hostile local filesystem race. Freshness detects selected byte changes,
+not semantic correctness. Completed historical reviews are not automatically
+reopened. Execution remains explicit and reviewed separately.
+
+Fresh multi-project browser QA still awaits the user's answer to the browser tool's
+access denial. API and Node checks do not substitute for visual verification.
+No claim of autonomous game completion, measured token savings or provider-attested
+model execution is made. The other projects' source work and chats remain separate.
