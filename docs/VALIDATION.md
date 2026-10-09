@@ -1,74 +1,61 @@
-# Validation — AgentRelay 0.6.0
+# Validation — AgentRelay 0.7.0
 
 Date: 2026-10-10 (Europe/Madrid). Windows, Python 3.12.14, MCP SDK 1.30.0.
-Earlier evidence: [v0.5 context and skill](VALIDATION_0_5.md),
-[v0.4 plans and freshness](VALIDATION_0_4.md), [v0.3 project pilots](VALIDATION_0_3.md).
+Earlier evidence: [v0.6 audit cursors](VALIDATION_0_6.md),
+[v0.5 context and skill](VALIDATION_0_5.md),
+[v0.4 plans and freshness](VALIDATION_0_4.md),
+[v0.3 project pilots](VALIDATION_0_3.md).
 
-## Recoverable audit context
+## Defects reproduced before correction
 
-Agent context previously repeated the complete ticket history on each handoff.
-MCP context, CLI context and configured worker packets now include the newest
-20 events, with an explicit total and cursor for older history. The current
-revision, ticket, acceptance, checkpoint, evidence and relations remain complete.
-Older events are recoverable through a ticket-scoped cursor; nothing is deleted.
-Python callers using Store.context without an event limit and the browser HTTP
-context preserve their previous behavior. Full export and backup preserve all
-history. [Compatibility details and examples](HISTORY.md).
+A valid hierarchy of 2,500 tickets caused the recursive relationship validator
+to raise `RecursionError` when a public action tried to add another ticket.
+The transaction rolled back, but valid work could not be added. Iterative
+topological traversal now accepts this graph and still rejects mixed hierarchy
+and dependency cycles with a 409 domain error. A late cycle preserves revision,
+dependencies, ticket counter and audit records after rollback. Shared prerequisites
+are also covered. [Author report](deep-graph-report.md).
 
-The cursor API was used against the four actual documentary pilot records with
-three events per page. All **34 events across 12 pages** matched the full histories
-exactly: 10, 12, 6 and 6 events respectively. Ticket status stayed completed.
-This exercised retrieval of existing evidence, not new game work. Private trace:
-`.agentrelay/v06-pilot-history.json`.
+CLI `context`, `history`, `export` and `backup` used to initialize a database even
+when its path was a typo. They also changed unrelated SQLite files before trying
+to read them. A read-only preflight now checks an existing file, the five original
+tables and their required columns before Store initialization. The workspace
+registry shares that preflight. Tests reject empty/corrupt files, unrelated
+tables, matching table names with incompatible columns, and matching views,
+without changing input bytes or creating backup output. An original schema
+without later tables still migrates successfully. Explicit creation through
+`action` remains available. [Author report](readonly-cli-report.md).
 
 ## Checks
 
-The complete suite ran **90 tests in 26.462 seconds: 88 passed, two skipped** for
-Windows symbolic-link privileges. Log: `.agentrelay/v06-tests.log` (ignored).
-The companion skill validator, JavaScript syntax and whitespace checks passed.
+The complete suite ran **98 tests in 30.569 seconds: 96 passed, two skipped** for
+Windows symbolic-link privileges. Private log: `.agentrelay/v07-tests.log`.
+This includes real MCP SDK stdio, HTTP isolation, real configured fixture
+processes, CLI subprocesses and JavaScript race checks. No LLM provider was
+invoked by the test suite. Independent integration review caught the initial
+table-name-only validation gap before release.
 
-New Store tests traverse over 60 events with interleaved IDs from other tickets,
-insert newer events between reads, check current context, empty boundaries,
-invalid types/ranges, reopened databases and SQLite backups. Recent context and
-its metadata are read together in one SQLite transaction. Cursor pages exclude
-their starting ID, so newer insertions do not shift the older segment.
+The updated CLI queried the four existing documentary pilot databases for
+context, history and full export: **33 tickets**, with **34 audit events** on
+the four selected review tickets. All queries succeeded; ticket, profile and
+event contents were unchanged. This validates existing project records, not new
+game implementation. Private trace: `.agentrelay/v07-cli-pilots.json`.
 
-An actual MCP SDK stdio client checked over 50 interleaved events, strict argument
-handling, unknown tickets, metadata and ticket isolation. CLI tests recovered all
-47 fixture events exactly, verified the explicit full-history option and rejected
-invalid or conflicting arguments.
-
-A real configured fixture process received 20 events from a 57-event history,
-including the latest claim and its current revision. It submitted an exact saved
-packet for review; the Store and export retained all 58 events after submission.
-No LLM provider was invoked by these tests.
-
-Independent review checked CLI and worker integration against the Store contract.
-The MCP instructions were refined to use the current revision returned by context
-or a successful mutation; they do not require a redundant context read before
-every write. Historical values still require fresh context before being acted on,
-and revision conflicts require reconciliation. Specialist sandbox setup failures
-are distinguished from the integrator's normal test runs in their reports.
-
-The wheel and source archive built successfully. An isolated wheel install checked
-source provenance, static assets, snapshot/freshness, plan replay, registry loading,
-and bounded context/history. All 13 package files and the installed skill payload
-matched working sources; the archive matched code, tests, docs, skills and examples
-without private data. Distribution hashes are in `dist/SHA256SUMS-0.6.0.txt`.
-
-The previous v0.5 [CI matrix passed all four jobs](https://github.com/VC-Anvil/agentrelay/actions/runs/37997883242).
-The [workflow history](https://github.com/VC-Anvil/agentrelay/actions/workflows/tests.yml)
-records exact subsequent commit outcomes. Pending jobs are not counted as passing.
+The wheel and source archive are checked against source bytes and an isolated
+wheel installation before publication. The [CI workflow history](https://github.com/VC-Anvil/agentrelay/actions/workflows/tests.yml)
+records the exact commit results; pending jobs are not counted as passing.
 
 ## Limits
 
-Limits apply to event count, not payload bytes, tokens or arbitrary field lengths.
-Relations are still full current tickets. Multiple pages do not share one frozen
-database snapshot: the total can grow, while a cursor still selects older IDs.
-An omitted event is not evidence it never occurred. Historical embedded ticket
-fields may be obsolete and must not replace current state during mutation.
+The database preflight prevents accidental initialization of missing or
+unrecognized files. It does not authenticate hostile databases or eliminate a
+path-replacement race. Recognized AgentRelay files still receive Store schema
+migrations; these commands are not filesystem-level read-only sessions.
 
-No new filesystem permissions, worker launches or acceptance decisions follow
-from reading history. The four game projects' source files and chats remain
-separate. Fresh multi-project browser QA is still pending explicit authorization
-after the earlier tool denial; API/MCP/CLI tests are not visual verification.
+The graph test exercises validation and rollback on prepared coherent data. It
+does not establish UI or end-to-end throughput for thousands of tickets.
+
+Fresh multi-project browser QA remains pending explicit authorization after the
+earlier tool denial. API, CLI and MCP checks do not substitute for visual QA.
+No source project changes, worker launches or game acceptance follow from these
+documentary pilot queries.

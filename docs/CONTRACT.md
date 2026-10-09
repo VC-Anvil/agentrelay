@@ -1,4 +1,4 @@
-# AgentRelay v0.6 contract
+# AgentRelay v0.7 contract
 
 Local-first ticket coordination for humans, external agents and explicitly configured workers. SQLite is authoritative. UI language Spanish; source/docs English. Default host 127.0.0.1:8787. Root owns integration, HTTP, MCP, adapters, docs and packaging; execution specialist owns execution.py/test_execution.py; frontend owner owns static/*.
 
@@ -8,7 +8,7 @@ Local-first ticket coordination for humans, external agents and explicitly confi
 - GET /api/tickets/{id}/context -> {ticket, parent, dependencies, children, events, instructions, profile, profiles}. Includes evidence/checkpoint, blocked readiness, recommended target profile (or null) and the profile catalog for help routing in the same read transaction. Recommendations are not execution attestations.
 - POST /api/actions -> {action: string, actor: string, data: object}; returns {result: object, state: State}. actor defaults human in UI. Action errors HTTP 400 (validation), 404, 409 (conflict). JSON error {error: string}. All mutations via this endpoint. UI sends expected_revision on update and lifecycle actions.
 - GET /api/export -> complete versioned JSON export.
-- GET /api/health -> {status: 'ok', version: '0.6.0'}.
+- GET /api/health -> {status: 'ok', version: '0.7.0'}.
 - GET /api/workspaces -> {workspaces:[{id,name,database,demo}],default_workspace_id}. Trusted startup registry only; no browser path input or registry mutation. Multi-project state/context/export/actions require X-AgentRelay-Workspace with a registered ID; missing is 400 and unknown is 404. Single-project requests remain compatible without it. State, context and HTTP export include workspace identity.
 - State also contains `demo`, `version`, and `execution: {enabled, workers, runs}`. Run and ticket statuses are read in one SQLite snapshot. Workers expose only id/name/model/effort/profile_ids/timeout_seconds. Run fields: id/ticket_id/worker_id/status/started_at/finished_at/summary/error/model/effort, newest 100.
 - POST actions `start_run {ticket_id,worker_id,expected_revision}` and `cancel_run {run_id}` require startup `--workers`. Normal result/state envelope applies. Execution protocol and failure statuses are in [EXECUTION.md](EXECUTION.md).
@@ -38,6 +38,10 @@ id string, name string, role string, provider string, model string, effort strin
 - update_profile: id + profile editable fields.
 
 All relations must exist, dependency and parent cycles rejected (including execution deadlocks between hierarchy and dependencies). Audit actor/time/action/ticket_id/details. SQLite transactions, foreign keys/WAL, optimistic revisions. No destructive deletion/reset UI. Events include id, ticket_id nullable, actor, action, details object, created_at.
+
+Cycle validation uses an iterative O(V+E) graph traversal. Valid deep hierarchies
+do not depend on Python's recursion limit. This is not a performance guarantee
+for rendering, listing or executing large boards.
 
 ## MCP listing
 
@@ -80,6 +84,15 @@ by default. Python `Store.ticket_events(ticket_id, limit=20, before_id=None)` is
 the read-only service behind cursor pages. Export and backup retain full history.
 
 ## Python service
+
+CLI `context`, `history`, `export` and `backup` require an existing recognized
+AgentRelay database before calling `Store`. Missing, corrupt, empty and unrelated
+files are rejected without bootstrapping a project or creating backup output.
+The workspace registry uses the same read-only SQLite preflight. Recognized
+AgentRelay databases still receive normal schema initialization/migrations;
+this does not promise filesystem-level read-only use or prevent hostile path
+replacement between validation and opening. Explicit initialization through
+`serve`, `action`, `mcp`, `run` and direct `Store(path)` remains compatible.
 
 `Store(path)` initializes schema only, no demo by default. `state()`, `context(ticket_id)`, `export()`, `action(action, data, actor='human')`. `DomainError(message, status=400)` has .status. `seed_demo()` explicit idempotent method. Store connections per operation, concurrent safe. Standard-library only.
 

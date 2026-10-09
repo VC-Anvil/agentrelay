@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import hashlib
 import sqlite3
+from collections import deque
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -349,21 +350,21 @@ class Store:
             graph[row["parent_id"]].add(row["id"])
         for row in db.execute("SELECT ticket_id,depends_on FROM dependencies"):
             graph[row["ticket_id"]].add(row["depends_on"])
-        visiting, visited = set(), set()
-
-        def visit(node):
-            if node in visiting:
-                raise DomainError("relationship creates a hierarchy/dependency deadlock", 409)
-            if node in visited:
-                return
-            visiting.add(node)
-            for nxt in graph[node]:
-                visit(nxt)
-            visiting.remove(node)
-            visited.add(node)
-
-        for node in graph:
-            visit(node)
+        indegree = {node: 0 for node in graph}
+        for successors in graph.values():
+            for successor in successors:
+                indegree[successor] += 1
+        ready = deque(node for node, count in indegree.items() if count == 0)
+        visited = 0
+        while ready:
+            node = ready.popleft()
+            visited += 1
+            for successor in graph[node]:
+                indegree[successor] -= 1
+                if indegree[successor] == 0:
+                    ready.append(successor)
+        if visited != len(graph):
+            raise DomainError("relationship creates a hierarchy/dependency deadlock", 409)
 
     def _normalize_ticket_fields(self, db, fields, *, creating=False):
         if not isinstance(fields, dict):

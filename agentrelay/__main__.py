@@ -105,7 +105,14 @@ def main():
     demo = getattr(args, "demo", False)
     database = args.db or Path.cwd() / ".agentrelay" / ("demo.sqlite" if demo else "workspace.sqlite")
     database = database.expanduser().resolve()
-    database.parent.mkdir(parents=True, exist_ok=True)
+    if args.command in {"context", "history", "export", "backup"}:
+        from .workspaces import require_agentrelay_database
+        try:
+            database = require_agentrelay_database(database)
+        except DomainError as exc:
+            parser.exit(1, f"Database: {exc}\n")
+    else:
+        database.parent.mkdir(parents=True, exist_ok=True)
     store = Store(database)
     if demo:
         store.seed_demo()

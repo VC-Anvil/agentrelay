@@ -6,7 +6,7 @@
 
 Turn goals into prioritized tickets, share durable context between agents, and keep delivery separate from acceptance. Humans use the web board; agents use the MCP server. Both operate on the same SQLite database.
 
-AgentRelay 0.6 combines a persistent ticket board, an MCP server and optional worker execution. Agents find work through filtered summaries and open current context with recent history; older audit events remain available by cursor. Register multiple local projects, import complete plans without duplicates, capture exact review inputs and detect when those inputs change. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
+AgentRelay 0.7 combines a persistent ticket board, an MCP server and optional worker execution. Agents find work through filtered summaries and open current context with recent history; older audit events remain available by cursor. Register multiple local projects, import complete plans without duplicates, capture exact review inputs and detect when those inputs change. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
 
 ![AgentRelay local board with explicitly fictional demo data](docs/preview.jpg)
 
@@ -25,6 +25,12 @@ python -m agentrelay serve
 ```
 
 That uses `.agentrelay/workspace.sqlite`. Stop the first server or use another `--port`. Each database represents one project. Always pass an **absolute `--db` path** when connecting agents to an existing workspace; relative paths depend on the process's working directory.
+
+`context`, `history`, `export` and `backup` require an existing AgentRelay database.
+They reject missing paths and unrelated SQLite files before initialization, so a
+typo during inspection does not create an empty project. Valid AgentRelay databases
+still receive normal schema migrations; these commands are not filesystem-level
+read-only sessions.
 
 Windows quick launch: `powershell -File .\Start-AgentRelay.ps1 -Demo`. It prefers `.runtime` (the development environment) or `.venv`, and runs the local web service hidden with logs under `.agentrelay`. It never installs packages or configures clients automatically.
 
