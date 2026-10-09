@@ -17,6 +17,8 @@ Read current context before claiming or editing. It includes the ticket revision
 
 Claim with the current revision and the actual host model and effort when known. Profile values are recommendations, not execution facts: never copy them into actual settings or report an unavailable model. For a non-Astra profile, use `unknown` as an explicit declaration when the host does not expose model or effort; missing metadata does not require routine confirmation and does not grant extra permission. An Astra assignment may be claimed only from a known actual `gpt-6-astra` host at `high` effort. Unknown or incompatible Astra settings block the claim; never downgrade or disguise that mismatch.
 
+Context includes up to 20 recent audit events by default. When `events_page.next_before_id` is non-null, older history exists. Use `list_ticket_events(ticket_id, before_id, limit)` only when the task needs it; continue with its next cursor. Historical event fields can be obsolete, so use the current ticket revision for mutations and reread context after conflicts or before acting on historical values. Do not infer that an event never happened because it is absent from the recent page. CLI equivalents are `context --event-limit` and `history --before-id`; `context --all-events` explicitly retrieves everything.
+
 ## Create a plan
 
 Use `create_plan` when the authorized outcome needs a coherent graph rather than many independent ticket calls. Give the request a stable `request_id`. Entries default to `backlog`; set `status: queued` only when work should become eligible after its dependencies. Each entry has a unique `key`; `parent_key` and `depends_on_keys` may point forward within the same request, while `parent_id` and `depends_on` refer to existing tickets.

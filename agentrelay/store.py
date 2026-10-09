@@ -233,6 +233,37 @@ class Store:
             result.append(item)
         return result
 
+    @staticmethod
+    def _history_limit(value, name="limit"):
+        if type(value) is not int or not 1 <= value <= 100:
+            raise DomainError(f"{name} must be an integer from 1 to 100")
+        return value
+
+    def _ticket_events_page(self, db, ticket_id, limit, before_id=None):
+        total = db.execute("SELECT COUNT(*) FROM events WHERE ticket_id=?", (ticket_id,)).fetchone()[0]
+        where = "WHERE ticket_id=?"
+        args = (ticket_id,)
+        if before_id is not None:
+            where += " AND id<?"
+            args = (ticket_id, before_id)
+        rows = self._events(db, where, args, limit + 1)
+        has_older = len(rows) > limit
+        events = rows[:limit]
+        return {"events": events, "total": total, "count": len(events), "limit": limit,
+                "next_before_id": events[-1]["id"] if has_older else None}
+
+    def ticket_events(self, ticket_id, *, limit=20, before_id=None):
+        """Read one ticket's older audit events; cursor excludes its starting ID."""
+        limit = self._history_limit(limit)
+        if before_id is not None and (type(before_id) is not int or not 1 <= before_id <= 2**63 - 1):
+            raise DomainError("before_id must be an integer from 1 to 2**63-1 or null")
+        with self._connection() as db:
+            db.execute("BEGIN")
+            ticket = self._require_ticket(db, ticket_id)
+            page = self._ticket_events_page(db, ticket["id"], limit, before_id)
+            db.commit()
+            return {"ticket_id": ticket["id"], **page, "before_id": before_id}
+
     def state(self):
         with self._connection() as db:
             db.execute("BEGIN")
@@ -247,7 +278,9 @@ class Store:
             db.commit()
             return state
 
-    def context(self, ticket_id):
+    def context(self, ticket_id, *, event_limit=None):
+        if event_limit is not None:
+            self._history_limit(event_limit, "event_limit")
         with self._connection() as db:
             db.execute("BEGIN")
             ticket = self._ticket(db, ticket_id)
@@ -255,11 +288,14 @@ class Store:
             dependencies = [self._ticket(db, dep) for dep in ticket["depends_on"]]
             children = [self._ticket(db, r[0]) for r in db.execute("SELECT id FROM tickets WHERE parent_id=? ORDER BY id", (ticket_id,))]
             profiles = [self._profile(row) for row in db.execute("SELECT * FROM profiles ORDER BY id")]
+            page = self._ticket_events_page(db, ticket["id"], event_limit) if event_limit is not None else None
             context = {"ticket": ticket, "parent": parent, "dependencies": dependencies,
-                       "children": children, "events": self._events(db, "WHERE ticket_id=?", (ticket_id,)),
+                       "children": children, "events": page["events"] if page is not None else self._events(db, "WHERE ticket_id=?", (ticket["id"],)),
                        "profile": next((p for p in profiles if p["id"] == ticket["profile_id"]), None),
                        "profiles": profiles,
                        "instructions": "Review acceptance, dependencies, checkpoint and evidence. Evidence references require independent verification. Record progress with checkpoint, then submit for review."}
+            if page is not None:
+                context["events_page"] = {key: page[key] for key in ("total", "count", "limit", "next_before_id")}
             db.commit()
             return context
 

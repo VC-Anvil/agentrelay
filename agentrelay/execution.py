@@ -315,7 +315,12 @@ class ExecutionManager:
                 return
             with self.store._connection() as db:
                 run = self._run(db, handle.run_id)
-            context = self.store.context(run["ticket_id"])
+            context = self.store.context(run["ticket_id"], event_limit=20)
+            context["instructions"] += (
+                " Events contain recent history only; events_page.next_before_id identifies older events."
+                " Retrieve older history through an authorized read-only connection when needed, or request missing context."
+                " Do not assume omitted history is absent."
+            )
             request = {"protocol": "agentrelay.worker.v1", "context": context,
                        "worker": {"id": worker.id, "model": worker.model, "effort": worker.effort}}
             payload = (json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8")

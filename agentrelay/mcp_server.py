@@ -20,6 +20,10 @@ LIST_SUMMARY_FIELDS = ("id", "title", "type", "status", "priority", "parent_id",
 def create_mcp(store: Store, actor: str) -> FastMCP:
     server = FastMCP("AgentRelay", instructions=(
         "Coordinate authorized work through persistent tickets. Read context before claiming. "
+        "Context includes recent history; when events_page.next_before_id is present, older "
+        "events exist and list_ticket_events can fetch them only if needed. A bounded page is "
+        "not evidence that earlier history is absent. Use the revision from current context or "
+        "a successful mutation; reread after a conflict or before acting on historical values. "
         "Use current revision for every mutation. Claim records the actual model/effort supplied "
         "by your host; recommended settings are not proof of availability. Checkpoint before "
         "handoff, request help with diagnostic evidence, submit results for independent review. "
@@ -83,10 +87,38 @@ def create_mcp(store: Store, actor: str) -> FastMCP:
                 "offset": offset, "limit": limit, "next_offset": next_offset}
 
     @server.tool(annotations=read)
-    def get_ticket_context(ticket_id: str) -> dict:
-        """Get the current revision, acceptance, dependencies, children and prior handoff."""
+    def get_ticket_context(ticket_id: str, event_limit: StrictInt = 20) -> dict:
+        """Get current ticket state plus a bounded page of its newest audit events.
+
+        events_page.next_before_id means older history exists; call list_ticket_events
+        only when that history is needed. Absence from this page is not proof that an
+        older event is absent. Use this current revision for the next mutation and
+        reread after a conflict rather than replaying stale work.
+        """
+        if type(event_limit) is not int or not 1 <= event_limit <= 100:
+            raise ValueError("event_limit must be an integer from 1 to 100")
         try:
-            return store.context(ticket_id)
+            return store.context(ticket_id, event_limit=event_limit)
+        except DomainError as exc:
+            raise ValueError(f"{exc.status}: {exc}") from exc
+
+    @server.tool(annotations=read)
+    def list_ticket_events(ticket_id: str, limit: StrictInt = 20,
+                           before_id: StrictInt | None = None) -> dict:
+        """Read an older audit page for one ticket using an exclusive event-ID cursor.
+
+        Events are newest first and never include other tickets. Continue with
+        next_before_id only if the task needs older history; null means the last page.
+        Historical pages are not current ticket state. Fetch get_ticket_context before
+        acting on values learned only from history, and reread after a conflict.
+        """
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer from 1 to 100")
+        if before_id is not None and (type(before_id) is not int
+                                      or not 1 <= before_id <= 2**63 - 1):
+            raise ValueError("before_id must be an integer from 1 to 2**63-1 or null")
+        try:
+            return store.ticket_events(ticket_id, limit=limit, before_id=before_id)
         except DomainError as exc:
             raise ValueError(f"{exc.status}: {exc}") from exc
 
@@ -172,8 +204,10 @@ def create_mcp(store: Store, actor: str) -> FastMCP:
 
     @server.resource("agentrelay://workflow")
     def workflow() -> str:
-        return ("Read context → claim ready ticket with current revision → checkpoint findings → "
+        return ("Read current context → claim ready ticket with current revision → checkpoint findings → "
                 "request help or split if needed → submit evidence → independent review. "
+                "Context returns recent events; page older history only when needed, and never "
+                "treat a bounded page as proof that an event is absent. "
                 "After a revision conflict fetch context; never retry stale updates blindly. "
                 "Finishing help does not restart its parent: review the result and explicitly requeue it. "
                 "Urgency affects pending work; it does not authorize interrupting another owner. "

@@ -66,6 +66,36 @@ class CliTests(unittest.TestCase):
         self.assertEqual(restored.returncode, 0, restored.stderr)
         self.assertEqual(json.loads(first.stdout), json.loads(restored.stdout))
 
+    def test_recent_context_and_complete_cursor_history(self):
+        from agentrelay.store import Store
+        store = Store(self.db)
+        ticket = store.action("create_ticket", {"title": "Long-running work"})
+        for index in range(46):
+            store.action("add_comment", {"id": ticket["id"], "body": f"Observation {index}"})
+        recent = self.command("context", "--db", self.db, "--ticket", ticket["id"])
+        self.assertEqual(recent.returncode, 0, recent.stderr)
+        context = json.loads(recent.stdout)
+        self.assertEqual(len(context["events"]), 20)
+        self.assertEqual(context["events_page"]["total"], 47)
+        collected = [event["id"] for event in context["events"]]
+        cursor = context["events_page"]["next_before_id"]
+        while cursor is not None:
+            older = self.command("history", "--db", self.db, "--ticket", ticket["id"],
+                                 "--before-id", cursor, "--limit", 11)
+            self.assertEqual(older.returncode, 0, older.stderr)
+            page = json.loads(older.stdout)
+            collected.extend(event["id"] for event in page["events"])
+            cursor = page["next_before_id"]
+        all_events = self.command("context", "--db", self.db, "--ticket", ticket["id"], "--all-events")
+        self.assertEqual(all_events.returncode, 0, all_events.stderr)
+        full = json.loads(all_events.stdout)
+        self.assertNotIn("events_page", full)
+        self.assertEqual(collected, [event["id"] for event in full["events"]])
+        self.assertEqual(len(set(collected)), 47)
+        self.assertNotEqual(self.command("history", "--db", self.db, "--ticket", ticket["id"], "--limit", 0).returncode, 0)
+        self.assertNotEqual(self.command("context", "--db", self.db, "--ticket", ticket["id"],
+                                        "--all-events", "--event-limit", 5).returncode, 0)
+
     def test_snapshot_commands_do_not_create_default_database(self):
         source = self.root / "source"
         source.mkdir()

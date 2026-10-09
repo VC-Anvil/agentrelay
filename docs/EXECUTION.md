@@ -1,6 +1,6 @@
 # Explicit worker execution
 
-AgentRelay 0.2 can launch trusted local worker processes. The normal board and MCP
+AgentRelay can launch trusted local worker processes. The normal board and MCP
 server still work without execution configured. No inference happens on startup.
 
 ## Setup
@@ -87,10 +87,13 @@ A trusted worker executable receives one UTF-8 JSON value on stdin:
 {"protocol":"agentrelay.worker.v1","context":{"ticket":{}},"worker":{"id":"worker","model":"configured-model","effort":"default"}}
 ```
 
-`context` is the full existing ticket context endpoint, including parents,
-dependencies, children, history, checkpoint, the target `profile` (or null) and the
-`profiles` catalog for help routing. These are recommendations, not proof of model
-availability. Stdout must contain exactly one
+`context` includes the complete current ticket, parent, dependencies, children,
+checkpoint, target `profile` (or null) and `profiles` catalog for help routing.
+Starting in 0.6, `events` contains the newest 20 audit events and `events_page`
+reports the total and next cursor for older history. Retrieve older events through
+an already-authorized read-only connection only when needed, or request missing
+context. No events are removed from the database. See [history semantics](HISTORY.md).
+Profile settings are recommendations, not proof of model availability. Stdout must contain exactly one
 JSON result (up to 1 MiB). Diagnostic output belongs on stderr, also bounded.
 
 ```json

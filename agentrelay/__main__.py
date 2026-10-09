@@ -25,14 +25,21 @@ def main():
     compare = sub.add_parser("compare-snapshot", help="Compare captured inputs with an explicit current source root")
     compare.add_argument("directory", type=Path)
     compare.add_argument("--root", type=Path, required=True)
-    for name in ("serve", "mcp", "export", "run", "backup", "action", "context"):
+    for name in ("serve", "mcp", "export", "run", "backup", "action", "context", "history"):
         command = sub.add_parser(name)
         command.add_argument("--db", type=Path, help="SQLite database shared by web and MCP")
         if name == "action":
             command.add_argument("--input", type=Path, required=True, help="UTF-8 JSON file containing action and data")
             command.add_argument("--actor", required=True, help="Audit identity; local declaration, not authentication")
-        if name == "context":
+        if name in {"context", "history"}:
             command.add_argument("--ticket", required=True)
+        if name == "context":
+            history_options = command.add_mutually_exclusive_group()
+            history_options.add_argument("--event-limit", type=int, default=20, help="Recent events to include (1..100)")
+            history_options.add_argument("--all-events", action="store_true", help="Explicitly include the complete audit history")
+        if name == "history":
+            command.add_argument("--limit", type=int, default=20)
+            command.add_argument("--before-id", type=int, help="Exclusive event ID cursor from the previous page")
         if name == "backup":
             command.add_argument("--output", type=Path, required=True, help="New SQLite file; refuses overwrite")
         if name == "serve":
@@ -102,10 +109,14 @@ def main():
     store = Store(database)
     if demo:
         store.seed_demo()
-    if args.command in {"action", "context"}:
+    if args.command in {"action", "context", "history"}:
         try:
-            result = (store.action(request["action"], request["data"], args.actor) if args.command == "action"
-                      else store.context(args.ticket))
+            if args.command == "action":
+                result = store.action(request["action"], request["data"], args.actor)
+            elif args.command == "history":
+                result = store.ticket_events(args.ticket, limit=args.limit, before_id=args.before_id)
+            else:
+                result = store.context(args.ticket, event_limit=None if args.all_events else args.event_limit)
             print(json.dumps(result, ensure_ascii=False, indent=2))
         except DomainError as exc:
             parser.exit(1, f"{exc}\n")
