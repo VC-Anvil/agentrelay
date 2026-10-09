@@ -10,7 +10,9 @@ Final command: `python -X utf8 -m unittest discover -s tests -v` — **35 passed
 - 8 subprocess execution tests cover claim/result transactions, help/split, failure, nonzero exit, malformed and oversized output, timeout, cancellation, contention, stale revision protection, restart recovery, profile constraints and required acceptance. These use explicitly identified Python fixtures, not LLMs.
 - 7 integration/adapter tests cover HTTP launch through independent review and export, online backup/reopening and overwrite rejection, priority ordering, persistent demo labeling, API validation, exact saved report contents, explicit Codex model/sandbox/schema and rejection of unsupported Ollama settings.
 
-JavaScript syntax, companion skill validation and `git diff --check` are additional release checks. Source and wheel distribution checks are recorded in the local build logs and `dist/SHA256SUMS.txt`. CI is not active: the GitHub publishing credential lacks `workflow` scope. The prepared Windows/Linux matrix remains [a template](github-actions-tests.yml), not a passing CI claim.
+JavaScript syntax, companion skill validation and `git diff --check` passed. The source archive and wheel built successfully; an isolated installed wheel passed core/import/static/backup checks with Python's isolated mode. Archive bytes matched the final source, tests and documentation. Distribution checksums are in `dist/SHA256SUMS.txt`.
+
+GitHub CI is active after the owner explicitly authorized `workflow` scope. The [first matrix run](https://github.com/VC-Anvil/agentrelay/actions/runs/37991927893) passed on all four combinations of Windows/Linux and Python 3.11/3.12, including the actual MCP integration and JavaScript syntax check. The workflow actions were subsequently updated from deprecated Node 20 versions to official checkout 7.0.1 / setup-python 7.0.0; the [workflow page](https://github.com/VC-Anvil/agentrelay/actions/workflows/tests.yml) shows the exact status of each commit.
 
 ## Real inference and independent acceptance
 
@@ -38,4 +40,4 @@ The v0.1 board and manual workflow were exercised in the browser and captured in
 
 One trusted local user, one execution manager and active worker per database. No unattended scheduler, provider spend metering, GitHub Issues sync, cross-project file locking or public hosting. Model fields are configured declarations. Evidence requires review. Cancellation stops owned processes under normal operation but cannot revert files. An abrupt manager/host crash can leave orphan children; restart blocks unfinished tickets without automatically retrying or killing potentially reused process IDs. Inspect processes and changed files before retrying interrupted work.
 
-Continue with [execution setup](EXECUTION.md) and [local checkout configuration](LOCAL_SETUP.md). Remaining acceptance gates are the fresh v0.2 browser walkthrough and running the prepared GitHub CI matrix once an authorized credential can install it.
+Continue with [execution setup](EXECUTION.md) and [local checkout configuration](LOCAL_SETUP.md). The remaining acceptance gate is the fresh v0.2 browser walkthrough. The GitHub credential permission issue has been resolved; no credentials are stored in this repository.

@@ -1,5 +1,7 @@
 # AgentRelay
 
+[![tests](https://github.com/VC-Anvil/agentrelay/actions/workflows/tests.yml/badge.svg)](https://github.com/VC-Anvil/agentrelay/actions/workflows/tests.yml)
+
 **A local project board that agents can actually work with.**
 
 Turn goals into prioritized tickets, share durable context between agents, and keep delivery separate from acceptance. Humans use the web board; agents use the MCP server. Both operate on the same SQLite database.
@@ -102,7 +104,7 @@ Install `.[mcp]` to include the real SDK stdio integration test; otherwise it is
 
 The project also has browser QA of the human workflow. See [validation](docs/VALIDATION.md), [architecture and boundaries](docs/ARCHITECTURE.md) and [API contract](docs/CONTRACT.md).
 
-The [GitHub Actions template](docs/github-actions-tests.yml) tests Python 3.11/3.12 on Windows and Linux. CI is **not active**: the publishing credential lacks GitHub's `workflow` permission. To enable it with an authorized credential or through the GitHub editor, place the template at `.github/workflows/tests.yml`. Local test results are documented independently of CI.
+The active [GitHub Actions workflow](.github/workflows/tests.yml) tests Python 3.11/3.12 on Windows and Linux and checks JavaScript syntax. [See actual runs and results](https://github.com/VC-Anvil/agentrelay/actions/workflows/tests.yml); local and real-inference results are documented independently in the validation report.
 
 ## Current boundaries
 

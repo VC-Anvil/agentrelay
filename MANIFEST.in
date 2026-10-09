@@ -1,4 +1,6 @@
 include LICENSE README.md AGENTS.md Start-AgentRelay.ps1
+include .gitattributes
+recursive-include .github/workflows *.yml
 recursive-include agentrelay/static *.html *.css *.js
 recursive-include skills *.md
 recursive-include docs *.md
