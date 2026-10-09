@@ -6,7 +6,7 @@
 
 Turn goals into prioritized tickets, share durable context between agents, and keep delivery separate from acceptance. Humans use the web board; agents use the MCP server. Both operate on the same SQLite database.
 
-AgentRelay 0.2 combines a persistent ticket board, an MCP server and optional worker execution. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
+AgentRelay 0.3 combines a persistent ticket board, an MCP server and optional worker execution. Register multiple local projects, capture exact review inputs, and connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
 
 ![AgentRelay local board with explicitly fictional demo data](docs/preview.jpg)
 
@@ -41,6 +41,8 @@ Windows quick launch: `powershell -File .\Start-AgentRelay.ps1 -Demo`. It prefer
 - Explicit worker launch/cancel, timeouts, bounded output, durable run history and conflict-safe results.
 - Codex CLI and Ollama text adapters, plus a provider-independent JSON worker protocol.
 - Bounded priority queue processing and online SQLite backup/restore.
+- Bounded input snapshots with SHA-256 verification, external artifact directories and a JSON action CLI for active-project pilots.
+- A trusted multi-project registry and explicit project selection for every browser request; matching ticket IDs in different databases stay separate.
 
 The initial profiles reflect the local author's workflow: Astra/high coordinates, with Sol, Terra and Luna as specialists. These names do not mean those models are connected or available. Add your own provider/model profiles in **Perfiles**. The Astra coordinator profile is deliberately locked under the current workspace policy.
 
@@ -55,6 +57,8 @@ agentrelay serve --db /absolute/project/.agentrelay/workspace.sqlite --workers /
 The package must be installed in the configured worker's Python environment. Open a ready ticket with acceptance criteria and select **Ejecutar tarea**. The **Ejecuciones** page records the process result. A worker can submit evidence, request help, split the ticket or report a blocker; it cannot approve its own work. Nothing launches on page load.
 
 [Execution setup, worker protocol, bounded queue and recovery](docs/EXECUTION.md). Codex defaults to read-only; enabling workspace edits is an explicit configuration choice. Provider runs may consume your connected account's allowance. Ollama requires an already-installed model and supports written analysis, not tool execution.
+
+For a project another team is actively changing, [capture exact review inputs and coordinate a separate pilot](docs/PROJECT_PILOTS.md). The ticket context includes target profile recommendations and the available profile catalog for help routing.
 
 ## Connect an agent via MCP
 

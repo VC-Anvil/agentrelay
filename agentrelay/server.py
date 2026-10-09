@@ -15,6 +15,7 @@ from urllib.parse import unquote, urlsplit
 
 from . import __version__
 from .store import DomainError, Store
+from .workspaces import Workspace
 
 STATIC = Path(__file__).with_name("static")
 MAX_BODY = 1_048_576
@@ -23,31 +24,47 @@ MAX_BODY = 1_048_576
 class AppServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], store: Store, demo: bool = False, execution=None):
+    def __init__(self, address: tuple[str, int], store: Store, demo: bool = False, execution=None,
+                 workspaces=None, default_workspace_id=None):
         self.store = store
         self.demo = demo
         self.execution = execution
+        self.workspaces = workspaces or {"default": Workspace("default", Path(store.path).resolve().parent.name, store, execution)}
+        self.default_workspace_id = default_workspace_id or next(iter(self.workspaces))
         super().__init__(address, Handler)
 
-    def snapshot(self) -> dict:
-        state = self.store.state()
+    def workspace(self, identity=None):
+        if identity is None:
+            if len(self.workspaces) > 1:
+                raise DomainError("Selecciona un espacio con X-AgentRelay-Workspace.")
+            identity = self.default_workspace_id
+        if identity not in self.workspaces:
+            raise DomainError("Espacio de trabajo no registrado.", 404)
+        return self.workspaces[identity]
+
+    def snapshot(self, identity=None) -> dict:
+        workspace = self.workspace(identity)
+        state = workspace.store.state()
         runs = state.pop("runs")
-        execution = self.execution.snapshot() if self.execution else {"enabled": False, "workers": []}
+        execution = workspace.execution.snapshot() if workspace.execution else {"enabled": False, "workers": []}
         # Ticket and run statuses come from the same SQLite read transaction.
         execution["runs"] = runs
-        return {**state, "demo": self.demo or state["demo"], "version": __version__, "execution": execution}
+        return {**state, "demo": self.demo or state["demo"], "version": __version__, "execution": execution,
+                "workspace": {"id": workspace.id, "name": workspace.name,
+                              "database": str(Path(workspace.store.path).resolve()), "demo": state["demo"]}}
 
     def server_close(self):
         try:
-            if self.execution:
-                self.execution.close()
+            for workspace in self.workspaces.values():
+                if workspace.execution:
+                    workspace.execution.close()
         finally:
             super().server_close()
 
 
 class Handler(BaseHTTPRequestHandler):
     server: AppServer
-    server_version = "AgentRelay/0.2"
+    server_version = "AgentRelay/0.3"
 
     def log_message(self, fmt, *args):
         logging.getLogger("agentrelay.http").info(fmt, *args)
@@ -102,13 +119,19 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/health":
                 self._json(200, {"status": "ok", "version": __version__})
+            elif path == "/api/workspaces":
+                self._json(200, {"workspaces": [w.public() for w in self.server.workspaces.values()],
+                                 "default_workspace_id": self.server.default_workspace_id})
             elif path == "/api/state":
-                self._json(200, self.server.snapshot())
+                self._json(200, self.server.snapshot(self.headers.get("X-AgentRelay-Workspace")))
             elif path == "/api/export":
-                self._json(200, self.server.store.export(), Content_Disposition='attachment; filename="agentrelay-export.json"')
+                workspace = self.server.workspace(self.headers.get("X-AgentRelay-Workspace"))
+                self._json(200, {**workspace.store.export(), "workspace": workspace.public()},
+                           Content_Disposition=f'attachment; filename="agentrelay-{workspace.id}-export.json"')
             elif path.startswith("/api/tickets/") and path.endswith("/context"):
                 ticket_id = path[len("/api/tickets/"):-len("/context")]
-                self._json(200, self.server.store.context(ticket_id))
+                workspace = self.server.workspace(self.headers.get("X-AgentRelay-Workspace"))
+                self._json(200, {**workspace.store.context(ticket_id), "workspace": workspace.public()})
             else:
                 assets = {"/": ("index.html", "text/html"), "/index.html": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"), "/style.css": ("style.css", "text/css"), "/static/app.js": ("app.js", "text/javascript"), "/static/style.css": ("style.css", "text/css")}
                 asset = assets.get(path)
@@ -141,20 +164,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(403, {"error": "La interfaz representa a human. Los agentes deben usar MCP."})
                 return
             action, data = payload["action"], payload["data"]
+            workspace = self.server.workspace(self.headers.get("X-AgentRelay-Workspace"))
             if action in {"start_run", "cancel_run"}:
-                if self.server.execution is None:
+                if workspace.execution is None:
                     raise DomainError("Ejecución desactivada. Inicia el servidor con --workers.", 409)
                 if action == "start_run":
                     if not isinstance(data.get("ticket_id"), str) or not isinstance(data.get("worker_id"), str) or type(data.get("expected_revision")) is not int:
                         raise DomainError("Se requieren ticket_id, worker_id y expected_revision.")
-                    result = self.server.execution.start(data["ticket_id"], data["worker_id"], data["expected_revision"])
+                    result = workspace.execution.start(data["ticket_id"], data["worker_id"], data["expected_revision"])
                 else:
                     if not isinstance(data.get("run_id"), str):
                         raise DomainError("Se requiere run_id.")
-                    result = self.server.execution.cancel(data["run_id"])
+                    result = workspace.execution.cancel(data["run_id"])
             else:
-                result = self.server.store.action(action, data, actor="human")
-            self._json(200, {"result": result, "state": self.server.snapshot()})
+                result = workspace.store.action(action, data, actor="human")
+            self._json(200, {"result": result, "state": self.server.snapshot(workspace.id)})
         except (ValueError, UnicodeError) as exc:
             self._json(400, {"error": "JSON o longitud de petición inválidos."})
         except DomainError as exc:
@@ -167,8 +191,9 @@ class Handler(BaseHTTPRequestHandler):
         self._json(403, {"error": "CORS no habilitado. Usa la interfaz local o MCP."})
 
 
-def serve(store: Store, port: int = 8787, demo: bool = False, execution=None):
-    with AppServer(("127.0.0.1", port), store, demo, execution) as server:
+def serve(store: Store, port: int = 8787, demo: bool = False, execution=None,
+          workspaces=None, default_workspace_id=None):
+    with AppServer(("127.0.0.1", port), store, demo, execution, workspaces, default_workspace_id) as server:
         print(f"AgentRelay {__version__} · http://127.0.0.1:{server.server_port}", flush=True)
         print("Datos ficticios de demostración" if demo else "Espacio de trabajo local", flush=True)
         try:

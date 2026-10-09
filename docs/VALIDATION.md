@@ -1,43 +1,103 @@
-# Validation — AgentRelay 0.2.0
+# Validation — AgentRelay 0.3.0
 
-Date: 2026-10-09. Windows, Python 3.12.14, MCP Python SDK 1.30.0, Codex CLI 0.162.0-alpha.2. The earlier browser validation is preserved in [v0.1 evidence](VALIDATION_0_1.md).
+Date: 2026-10-09. Windows, Python 3.12.14, MCP Python SDK 1.30.0,
+Codex CLI 0.162.0-alpha.2. Earlier evidence is preserved in
+[v0.2 validation](VALIDATION_0_2.md) and [v0.1 browser evidence](VALIDATION_0_1.md).
 
-## Automated checks
+## Real active-project pilots
 
-Final command: `python -X utf8 -m unittest discover -s tests -v` — **35 passed in 11.543 seconds**. Raw local log: `.agentrelay/v02-final-localtemp.log` (ignored).
+Four private, separate project databases were used for documentary reviews while
+the source projects continued in their own sessions. The pilot did not edit their
+sources, launch builds/emulators, message their sessions or certify their games.
+All source bundles, configs, receipts and reports remain ignored under
+`.agentrelay/pilots/`; this public report does not redistribute those inputs.
 
-- 13 Store domain tests, 3 integrity regressions, 3 real HTTP tests and 1 actual SDK stdio client/server test preserve the existing ticket lifecycle.
-- 8 subprocess execution tests cover claim/result transactions, help/split, failure, nonzero exit, malformed and oversized output, timeout, cancellation, contention, stale revision protection, restart recovery, profile constraints and required acceptance. These use explicitly identified Python fixtures, not LLMs.
-- 7 integration/adapter tests cover HTTP launch through independent review and export, online backup/reopening and overwrite rejection, priority ordering, persistent demo labeling, API validation, exact saved report contents, explicit Codex model/sandbox/schema and rejection of unsupported Ollama settings.
+- Six actual Codex runs, configured `gpt-6-sol` / `high`, read-only sandbox:
+  one requested help, five submitted reports (including one corrected attempt).
+- In the first run, the host policy rejected file-reading commands. The worker
+  honestly requested help and blocked its ticket. After explicit owner authorization,
+  AgentRelay supplied verified snapshot text without changing the sandbox. A separate
+  reviewer accepted the help before the original ticket was explicitly requeued.
+- Independent inspection rejected one report's model recommendation because it
+  contradicted that project's current policy. The pilot profiles and source context
+  were corrected, and a second report was reviewed. The original attempt remains in
+  the audit history. A separate false-positive review observation was explicitly
+  withdrawn after checking the exact excerpt; it was not silently erased.
+- Four documentary review tickets were accepted after inspecting their sources,
+  limits and saved reports. The integrator created five proposed follow-ups per
+  project, with priorities, profiles, acceptance, parentage and dependencies.
+- A different reviewer checked all four snapshot/manifest/report identities,
+  proposal graphs and model-policy handling, then accepted the four pilot objectives.
+  The twenty proposed game tasks and their four parent objectives remain in backlog.
+  None was executed or synchronized into the game development sessions.
 
-JavaScript syntax, companion skill validation and `git diff --check` passed. The source archive and wheel built successfully; an isolated installed wheel passed core/import/static/backup checks with Python's isolated mode. Archive bytes matched the final source, tests and documentation. Distribution checksums are in `dist/SHA256SUMS.txt`.
+The private trace includes `index.json`, `review-summary.json`, the per-project
+`reviewed-plan.json`, and `independent-review.md`. These demonstrate one bounded
+documentary workflow, not general autonomous coding performance or token savings.
+Provider model fields are configured declarations, not independent attestation.
 
-GitHub CI is active after the owner explicitly authorized `workflow` scope. The [first matrix run](https://github.com/VC-Anvil/agentrelay/actions/runs/37991927893) passed on all four combinations of Windows/Linux and Python 3.11/3.12, including the actual MCP integration and JavaScript syntax check. The workflow actions were subsequently updated from deprecated Node 20 versions to official checkout 7.0.1 / setup-python 7.0.0; the [workflow page](https://github.com/VC-Anvil/agentrelay/actions/workflows/tests.yml) shows the exact status of each commit.
+## Product changes driven by the pilots
 
-## Real inference and independent acceptance
+Input snapshots preserve exact selected bytes and SHA-256 provenance. The first
+real capture exposed Python 3.12 Windows path-stat versus descriptor-stat `ctime`
+differences; the implementation and regression test now account for that without
+discarding identity, size or modification-time checks. Captures are explicitly
+non-atomic across multiple files and unsigned manifests are not authentication.
 
-A separate `.agentrelay/live-validation.sqlite` project was used; no fictional demo ticket was treated as real work.
+External artifact directories keep reports out of source projects. Explicit
+snapshot text delivery supports providers without file tools, with strict UTF-8,
+corruption checks and a 512 KiB context ceiling. Binary/oversized inputs fail before
+provider invocation. Receipts record input provenance; new snapshot deliveries also
+attach the receipt and hash the exact saved report bytes.
 
-- Ticket `AR-0001`: identify the dependency cycle A depends on B, B on C, C on A; remove one edge; report a valid execution order and explicitly state the limits of textual analysis.
-- Worker `codex-sol`: installed Codex CLI, configured `gpt-6-sol` / `high`, read-only sandbox, isolated working directory, 240-second timeout. No fallback model.
-- Run `run-19e5ecdfbaba49a9b6904bcbbbd225e9`: started 20:55:13.894 UTC, submitted 20:55:26.830 UTC. Wall-clock run duration 12.936 seconds includes the adapter and CLI, not just inference.
-- The actual saved report correctly identified A → B → C → A, removed C's dependency on A and proposed C → B → A. It explicitly stated that no code tests had run. [Exact report copy](../examples/results/cycle-report.md), SHA-256 `22c113a77d7267f109612f9f5dbcffb6617f1bacda4d68c547682dcba9011ae2`.
-- The ticket first entered `review`. The integrator read the artifact, checked all three criteria and completed it using the separate `agent:astra-reviewer` identity. This was an actual review, not worker self-approval.
+Ticket context now includes profile recommendations and the help-routing catalog.
+A JSON action/context CLI uses the same revision and lifecycle checks; its output
+is UTF-8 on Windows pipes. A startup workspace registry keeps projects separate
+and binds requests to registered IDs, even when their ticket IDs are identical.
 
-This verifies one bounded real-model text task through the shipped Codex bridge. It does not benchmark general coding ability, attest provider internals or measure token savings. Ollama was installed but had no local models; no Ollama inference is claimed and no model was downloaded.
+## Automated and independent checks
 
-## Review and environment findings
+The final complete suite ran **62 tests in 16.089 seconds: 61 passed and one was
+explicitly skipped** because this Windows account cannot create the symlink needed
+by that case. Raw local log: `.agentrelay/v03-tests.log` (ignored). New tests cover input integrity and limits, adapter text supply and receipts,
+CLI conflicts and Unicode, cross-project HTTP isolation and execution-manager
+cleanup on startup failure. The actual MCP SDK stdio test is included. Fixtures
+do not call LLMs.
 
-Independent frontend review found and the integration corrected: running without acceptance criteria, incompatible wildcard workers offered for Astra, a cancellation race with an inaccurate success toast, discarded subprocess diagnostics, missing taskkill fallback, incoherent ticket/run snapshots and unhelpful configuration tracebacks. Late drawer-context responses are also guarded. Diagnostics remain bounded local files rather than web content.
+Independent code review found two within-project UI races: a stale poll could
+overwrite a confirmed mutation, and closing/reopening the same ticket could accept
+an old context response. Data generations and context-request identities now guard
+these paths; concurrent mutations are serialized in the UI. Four deterministic
+JavaScript race scenarios passed against the actual application functions, via
+the Node test included in the suite. A real two-manager HTTP/process fixture also
+passed: identical ticket/worker IDs remain isolated, cross-project cancellation
+returns 404, both reports land in their own database, and cancellation within the
+selected project works. JavaScript syntax and whitespace checks passed.
 
-A preliminary 35-test integrated run passed in 135.381 seconds. A subsequent run stalled and failed on the shared D: test directories. A faulthandler trace located a long wait in SQLite connection close during test setup; raw attempts remain `.agentrelay/v02-final-tests.log` and `.agentrelay/execution-diagnosis.log`. Tests now use the operating system's temporary directory instead of forcing test databases into the source/virtual-environment tree. The final full run above passed without changing acceptance checks, worker deadlines or SQLite durability settings. Interrupted and failed attempts are not counted as passing.
+The wheel and source archive built successfully. An isolated installation of the
+wheel verified version/import provenance, packaged static assets, snapshot
+capture/verification, the project registry and persistent tickets. Package and
+source-archive bytes were compared with the corresponding working files, including
+the JavaScript regression harness; private pilot directories were absent. Exact
+distribution hashes are saved in `dist/SHA256SUMS-0.3.0.txt`.
 
-## Visual verification boundary
+The [CI matrix](https://github.com/VC-Anvil/agentrelay/actions/workflows/tests.yml)
+records exact per-commit outcomes on Windows/Linux and Python 3.11/3.12.
 
-The v0.1 board and manual workflow were exercised in the browser and captured in `docs/preview.jpg`. During v0.2 validation the browser tool denied access to the local page, so the new execution UI has static review, syntax and HTTP-contract verification but **has not yet received a fresh browser walkthrough**. No alternate browser route was used after that denial. The pending user authorization is for the local preview at `http://127.0.0.1:8788`.
+The reviewer sandbox could not open SQLite files under its own temporary directory;
+those setup failures are not counted as successful tests. The integrator's normal
+environment ran the actual suite above. No filesystem sandbox was weakened by the
+product. Specialist reports retain their environment limitations and test attempts.
 
-## Operational boundaries
+## Visual boundary and operational limits
 
-One trusted local user, one execution manager and active worker per database. No unattended scheduler, provider spend metering, GitHub Issues sync, cross-project file locking or public hosting. Model fields are configured declarations. Evidence requires review. Cancellation stops owned processes under normal operation but cannot revert files. An abrupt manager/host crash can leave orphan children; restart blocks unfinished tickets without automatically retrying or killing potentially reused process IDs. Inspect processes and changed files before retrying interrupted work.
+The board's earlier browser proof remains v0.1. The browser tool denied the previous
+local preview; the new multi-project preview awaits explicit browser permission and
+a fresh walkthrough. API checks and JavaScript syntax are not visual validation.
 
-Continue with [execution setup](EXECUTION.md) and [local checkout configuration](LOCAL_SETUP.md). The remaining acceptance gate is the fresh v0.2 browser walkthrough. The GitHub credential permission issue has been resolved; no credentials are stored in this repository.
+One trusted local user; one manager/active worker per database. Multiple configured
+projects do not add shared-file locking across databases. No unattended scheduler,
+automatic acceptance, signed provenance, provider spend metering, GitHub Issues
+sync or public hosting. Inspect owned processes after a host crash before retrying.
+
+See [project-pilot setup](PROJECT_PILOTS.md) and [execution boundaries](EXECUTION.md).

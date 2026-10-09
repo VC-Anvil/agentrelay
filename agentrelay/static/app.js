@@ -47,14 +47,30 @@
     actual_effort: "esfuerzo usado", blocked_reason: "motivo de bloqueo"
   };
   const COLUMNS = ["backlog", "queued", "in_progress", "blocked", "review", "done"];
+  const WORKSPACE_SESSION_KEY = "agentrelay-workspace-id";
+  class ApiError extends Error {
+    constructor(message, status) {
+      super(message);
+      this.name = "ApiError";
+      this.status = status;
+    }
+  }
   const app = {
     state: null,
+    workspaces: [],
+    workspaceId: null,
+    workspaceEpoch: 0,
+    dataEpoch: 0,
+    contextRequest: 0,
+    legacyWorkspace: false,
     section: "board",
     display: localStorage.getItem("agentrelay-view") || "board",
     selectedId: null,
     context: null,
     drawerDirty: false,
-    loading: false
+    dialogDirty: false,
+    loadingEpoch: null,
+    mutationCount: 0
   };
 
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -74,6 +90,17 @@
   };
   const values = (text, separator = /[\n,]/) => String(text || "").split(separator).map((part) => part.trim()).filter(Boolean);
   const initials = (name) => String(name || "?").split(/\s+/).slice(0, 2).map((word) => word[0]).join("").toUpperCase();
+  const fileSlug = (value) => String(value || "proyecto").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "proyecto";
+  const activeWorkspace = () => app.workspaces.find((workspace) => workspace.id === app.workspaceId) || app.state?.workspace || null;
+  const captureWorkspace = () => ({ id: app.workspaceId, epoch: app.workspaceEpoch, legacy: app.legacyWorkspace });
+  const isCurrentWorkspace = (scope) => Boolean(scope && scope.epoch === app.workspaceEpoch && scope.id === app.workspaceId && scope.legacy === app.legacyWorkspace);
+  const hasDirtyEdits = () => app.drawerDirty || app.dialogDirty;
+  const storedWorkspace = () => {
+    try { return sessionStorage.getItem(WORKSPACE_SESSION_KEY); } catch (_) { return null; }
+  };
+  const rememberWorkspace = (id) => {
+    try { sessionStorage.setItem(WORKSPACE_SESSION_KEY, id); } catch (_) { /* storage may be unavailable */ }
+  };
   // Keep the revision represented by the open form. Background polling may refresh
   // the board, but must not silently turn a stale edit into a last-write-wins edit.
   const currentTicket = () => app.context?.ticket || app.state?.tickets?.find((ticket) => ticket.id === app.selectedId) || null;
@@ -125,9 +152,31 @@
     const response = await fetch(url, options);
     let payload = null;
     const contentType = response.headers.get("content-type") || "";
-    if (contentType.includes("application/json")) payload = await response.json();
-    if (!response.ok) throw new Error(payload?.error || `La solicitud falló (${response.status})`);
+    if (contentType.includes("application/json")) {
+      try { payload = await response.json(); } catch (_) { /* handled as an invalid response below */ }
+    }
+    if (!response.ok) throw new ApiError(payload?.error || `La solicitud falló (${response.status})`, response.status);
     return payload;
+  }
+
+  function workspaceHeaders(scope, headers = {}) {
+    const result = new Headers(headers);
+    result.set("X-AgentRelay-Client", "browser");
+    if (!scope.legacy) result.set("X-AgentRelay-Workspace", scope.id);
+    return result;
+  }
+
+  function workspaceRequest(url, options, scope) {
+    const captured = scope || captureWorkspace();
+    if (!captured.id) throw new Error("No hay un proyecto seleccionado");
+    return request(url, { ...(options || {}), headers: workspaceHeaders(captured, options?.headers) });
+  }
+
+  function validateWorkspaceState(state, scope) {
+    if (!state || typeof state !== "object") throw new Error("El servicio devolvió un estado inválido");
+    if (!scope.legacy && state.workspace?.id !== scope.id) {
+      throw new Error("El servicio devolvió datos de otro proyecto");
+    }
   }
 
   function setConnected(connected) {
@@ -148,16 +197,124 @@
     setTimeout(() => item.remove(), 4200);
   }
 
+  function renderWorkspaceCatalog() {
+    const select = $("#workspace-select");
+    clear(select);
+    app.workspaces.forEach((workspace) => {
+      select.append(option(workspace.id, `${workspace.name} · ${workspace.database}`));
+    });
+    select.value = app.workspaceId || "";
+    const workspace = activeWorkspace();
+    $("#workspace-database").textContent = workspace?.database || "Base de datos no indicada";
+    $("#workspace-database").title = workspace?.database || "";
+    select.disabled = !app.workspaceId || app.mutationCount > 0;
+    showSection(app.section, false);
+  }
+
+  function syncWorkspaceControls() {
+    $("#workspace-select").disabled = !app.workspaceId || app.mutationCount > 0;
+    const unavailable = !app.state;
+    $("#export-button").disabled = unavailable;
+    $("#new-ticket-button").disabled = unavailable;
+    $("#new-profile-button").disabled = unavailable;
+  }
+
+  function resetWorkspaceUi() {
+    app.state = null;
+    closeTicket();
+    app.dialogDirty = false;
+    [$("#ticket-dialog"), $("#profile-dialog")].forEach((dialog) => {
+      if (dialog.open) dialog.close();
+    });
+    $("#ticket-create-form").reset();
+    $("#profile-form").reset();
+    $("#search-filter").value = "";
+    $("#priority-filter").value = "";
+    $("#profile-filter").value = "";
+    $("#status-filter").value = "";
+    ["metrics", "board", "ticket-list", "execution-overview", "runs-list", "profiles-grid", "activity-list"].forEach((id) => clear($("#" + id)));
+    $$(".page-view").forEach((view) => { view.hidden = true; });
+    $("#demo-badge").hidden = true;
+    $("#loading-state").hidden = false;
+    $("#loading-state").lastChild.textContent = "Cargando proyecto…";
+    showError("");
+    syncWorkspaceControls();
+  }
+
+  async function selectWorkspace(id) {
+    const workspace = app.workspaces.find((item) => item.id === id);
+    if (!workspace || id === app.workspaceId) {
+      $("#workspace-select").value = app.workspaceId || "";
+      return;
+    }
+    if (app.mutationCount) {
+      $("#workspace-select").value = app.workspaceId;
+      toast("Espera a que termine la operación en curso antes de cambiar de proyecto.", true);
+      return;
+    }
+    if (hasDirtyEdits() && !window.confirm("Hay cambios sin guardar. ¿Quieres descartarlos y cambiar de proyecto?")) {
+      $("#workspace-select").value = app.workspaceId;
+      return;
+    }
+    app.workspaceEpoch += 1;
+    app.workspaceId = workspace.id;
+    rememberWorkspace(workspace.id);
+    resetWorkspaceUi();
+    renderWorkspaceCatalog();
+    await loadState();
+  }
+
+  async function loadWorkspaceCatalog() {
+    let catalog;
+    try {
+      catalog = await request("/api/workspaces", { headers: { "X-AgentRelay-Client": "browser" } });
+    } catch (error) {
+      if (error.status !== 404) throw error;
+      app.legacyWorkspace = true;
+      app.workspaces = [{ id: "legacy", name: "Proyecto local", database: "Base de datos local", demo: false }];
+      app.workspaceId = "legacy";
+      app.workspaceEpoch += 1;
+      renderWorkspaceCatalog();
+      await loadState();
+      return;
+    }
+    if (!catalog || !Array.isArray(catalog.workspaces) || !catalog.workspaces.length) {
+      throw new Error("El catálogo de proyectos está vacío o no es válido");
+    }
+    const ids = new Set();
+    for (const workspace of catalog.workspaces) {
+      if (!workspace || typeof workspace.id !== "string" || !workspace.id || typeof workspace.name !== "string" || !workspace.name || typeof workspace.database !== "string" || !workspace.database || ids.has(workspace.id)) {
+        throw new Error("El catálogo contiene un proyecto inválido");
+      }
+      ids.add(workspace.id);
+    }
+    if (typeof catalog.default_workspace_id !== "string" || !ids.has(catalog.default_workspace_id)) {
+      throw new Error("El catálogo no define un proyecto predeterminado válido");
+    }
+    app.legacyWorkspace = false;
+    app.workspaces = catalog.workspaces.map((workspace) => ({ ...workspace }));
+    const remembered = storedWorkspace();
+    app.workspaceId = ids.has(remembered) ? remembered : catalog.default_workspace_id;
+    app.workspaceEpoch += 1;
+    rememberWorkspace(app.workspaceId);
+    renderWorkspaceCatalog();
+    await loadState();
+  }
+
   async function loadState({ quiet = false } = {}) {
-    if (app.loading) return;
-    app.loading = true;
+    const scope = captureWorkspace();
+    const dataEpoch = app.dataEpoch;
+    if (!scope.id || app.mutationCount || app.loadingEpoch === scope.epoch) return;
+    app.loadingEpoch = scope.epoch;
     try {
       const previousRuns = JSON.stringify((app.state?.execution?.runs || []).map((run) => [run.id, run.status, run.finished_at]));
-      const state = await request("/api/state", { headers: { "X-AgentRelay-Client": "browser" } });
+      const state = await workspaceRequest("/api/state", {}, scope);
+      if (!isCurrentWorkspace(scope) || dataEpoch !== app.dataEpoch) return;
+      validateWorkspaceState(state, scope);
       app.state = state;
       setConnected(true);
       showError("");
-      $("#demo-badge").hidden = !state.demo;
+      $("#demo-badge").hidden = !(state.workspace?.demo ?? state.demo);
       $("#loading-state").hidden = true;
       showSection(app.section, false);
       renderAll();
@@ -169,34 +326,53 @@
         }
       }
     } catch (error) {
+      if (!isCurrentWorkspace(scope) || dataEpoch !== app.dataEpoch) return;
       setConnected(false);
       if (!quiet || !app.state) {
         $("#loading-state").hidden = true;
         showError(`No se pudo cargar AgentRelay. ${error.message}`);
       }
     } finally {
-      app.loading = false;
+      if (app.loadingEpoch === scope.epoch) app.loadingEpoch = null;
+      if (isCurrentWorkspace(scope)) syncWorkspaceControls();
     }
   }
 
   async function mutate(action, data, successMessage) {
+    if (app.mutationCount) throw new Error("Espera a que termine la operación en curso.");
+    const scope = captureWorkspace();
+    let reloadAfterMutation = false;
+    app.dataEpoch += 1;
+    app.contextRequest += 1;
+    app.mutationCount += 1;
+    syncWorkspaceControls();
     try {
-      const payload = await request("/api/actions", {
+      const payload = await workspaceRequest("/api/actions", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-AgentRelay-Client": "browser" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, actor: "human", data })
-      });
-      if (payload.state) app.state = payload.state;
+      }, scope);
+      if (!isCurrentWorkspace(scope)) return null;
+      if (!payload || typeof payload !== "object" || !payload.state) throw new Error("El servicio devolvió una acción sin estado actualizado");
+      validateWorkspaceState(payload.state, scope);
+      app.state = payload.state;
       renderAll();
       if (app.selectedId) {
         await loadContext(app.selectedId, { forceRender: true });
       }
+      if (!isCurrentWorkspace(scope)) return null;
       if (successMessage) toast(successMessage);
-      return payload.result;
+      return payload?.result;
     } catch (error) {
+      if (!isCurrentWorkspace(scope)) return null;
       toast(error.message, true);
-      if (/revision|conflict|actualiz|cambió/i.test(error.message)) await loadState({ quiet: true });
+      if (/revision|conflict|actualiz|cambió/i.test(error.message)) reloadAfterMutation = true;
       throw error;
+    } finally {
+      app.mutationCount = Math.max(0, app.mutationCount - 1);
+      app.dataEpoch += 1;
+      syncWorkspaceControls();
+      if (reloadAfterMutation && isCurrentWorkspace(scope)) await loadState({ quiet: true });
     }
   }
 
@@ -487,9 +663,11 @@
       profiles: ["Configuración", "Perfiles", "Recomendaciones explícitas de rol, modelo, esfuerzo y capacidades."],
       activity: ["Auditoría", "Actividad", "Historial reciente y verificable del proyecto."]
     }[section];
+    const workspaceName = activeWorkspace()?.name || "Proyecto";
     $("#section-eyebrow").textContent = content[0];
-    $("#page-title").textContent = content[1];
+    $("#page-title").textContent = section === "board" ? workspaceName : `${content[1]} · ${workspaceName}`;
     $("#page-subtitle").textContent = content[2];
+    document.title = `${content[1]} · ${workspaceName} · AgentRelay`;
     $$(".page-view").forEach((view) => { view.hidden = view.id !== `${section}-view`; });
     $$("[data-nav]").forEach((button) => button.classList.toggle("is-active", button.dataset.nav === section));
     $("#new-ticket-button").hidden = section !== "board";
@@ -505,12 +683,17 @@
   }
 
   async function loadContext(id, { forceRender = false } = {}) {
+    const scope = captureWorkspace();
+    const requestId = ++app.contextRequest;
     try {
-      const context = await request(`/api/tickets/${encodeURIComponent(id)}/context`, { headers: { "X-AgentRelay-Client": "browser" } });
+      const context = await workspaceRequest(`/api/tickets/${encodeURIComponent(id)}/context`, {}, scope);
+      if (!isCurrentWorkspace(scope) || app.selectedId !== id || requestId !== app.contextRequest) return;
+      if (!scope.legacy && context?.workspace?.id !== scope.id) throw new Error("El contexto pertenece a otro proyecto");
       if (!forceRender && app.drawerDirty) return;
       app.context = context;
       if (forceRender || !app.drawerDirty) renderDrawer();
     } catch (error) {
+      if (!isCurrentWorkspace(scope) || app.selectedId !== id || requestId !== app.contextRequest) return;
       toast(`No se pudo cargar el contexto: ${error.message}`, true);
     }
   }
@@ -532,6 +715,7 @@
   }
 
   function closeTicket() {
+    app.contextRequest += 1;
     app.selectedId = null;
     app.context = null;
     app.drawerDirty = false;
@@ -930,6 +1114,7 @@
   function openProfile(profile = null) {
     const form = $("#profile-form");
     form.reset();
+    app.dialogDirty = false;
     $("#profile-dialog-title").textContent = profile ? "Editar perfil" : "Nuevo perfil";
     ["id", "name", "role", "provider", "model", "effort", "preference", "description"].forEach((name) => {
       form.elements[name].value = profile?.[name] || (name === "preference" ? "balanced" : name === "effort" ? "default" : "");
@@ -939,21 +1124,27 @@
   }
 
   async function exportJson() {
+    const scope = captureWorkspace();
+    const workspace = activeWorkspace();
     try {
-      const response = await fetch("/api/export", { headers: { "X-AgentRelay-Client": "browser" } });
+      const response = await fetch("/api/export", { headers: workspaceHeaders(scope) });
+      if (!isCurrentWorkspace(scope)) return;
       if (!response.ok) {
         let message = `La exportación falló (${response.status})`;
         try { message = (await response.json()).error || message; } catch (_) { /* non-JSON error */ }
         throw new Error(message);
       }
       const blob = await response.blob();
+      if (!isCurrentWorkspace(scope)) return;
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `agentrelay-${new Date().toISOString().slice(0, 10)}.json`;
+      link.download = `agentrelay-${fileSlug(workspace?.name)}-${new Date().toISOString().slice(0, 10)}.json`;
       document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url);
-      toast("Exportación preparada");
-    } catch (error) { toast(error.message, true); }
+      toast(`Exportación de ${workspace?.name || "proyecto"} preparada`);
+    } catch (error) {
+      if (isCurrentWorkspace(scope)) toast(error.message, true);
+    }
   }
 
   function wireEvents() {
@@ -966,8 +1157,9 @@
       if (editProfile) openProfile(profileById(editProfile.dataset.editProfile));
     });
     ["search-filter", "priority-filter", "profile-filter", "status-filter"].forEach((id) => $("#" + id).addEventListener(id === "search-filter" ? "input" : "change", () => { renderBoard(); renderList(); }));
+    $("#workspace-select").addEventListener("change", (event) => selectWorkspace(event.currentTarget.value));
     $$('[data-display]').forEach((button) => button.addEventListener("click", () => setDisplay(button.dataset.display)));
-    $("#new-ticket-button").addEventListener("click", () => { $("#ticket-create-form").reset(); syncGlobalSelects(); $("#ticket-dialog").showModal(); });
+    $("#new-ticket-button").addEventListener("click", () => { $("#ticket-create-form").reset(); app.dialogDirty = false; syncGlobalSelects(); $("#ticket-dialog").showModal(); });
     $("#new-profile-button").addEventListener("click", () => openProfile());
     $("#export-button").addEventListener("click", exportJson);
     $("#refresh-button").addEventListener("click", () => loadState());
@@ -978,7 +1170,7 @@
 
     $("#ticket-create-form").addEventListener("submit", async (event) => {
       event.preventDefault();
-      if (event.submitter?.value === "cancel") { $("#ticket-dialog").close(); return; }
+      if (event.submitter?.value === "cancel") { app.dialogDirty = false; $("#ticket-dialog").close(); return; }
       const data = new FormData(event.currentTarget);
       try {
         const result = await mutate("create_ticket", {
@@ -986,6 +1178,7 @@
           parent_id: data.get("parent_id") || null, profile_id: data.get("profile_id") || null,
           depends_on: values(data.get("depends_on")), acceptance: values(data.get("acceptance"), /\n/)
         }, "Tarea creada");
+        app.dialogDirty = false;
         $("#ticket-dialog").close();
         const id = result?.id || result?.ticket?.id;
         if (id) openTicket(id);
@@ -994,7 +1187,7 @@
 
     $("#profile-form").addEventListener("submit", async (event) => {
       event.preventDefault();
-      if (event.submitter?.value === "cancel") { $("#profile-dialog").close(); return; }
+      if (event.submitter?.value === "cancel") { app.dialogDirty = false; $("#profile-dialog").close(); return; }
       const data = new FormData(event.currentTarget);
       const id = data.get("id");
       const payload = {
@@ -1002,12 +1195,32 @@
         effort: data.get("effort").trim(), preference: data.get("preference"), capabilities: values(data.get("capabilities")), description: data.get("description").trim()
       };
       if (id) payload.id = id;
-      try { await mutate(id ? "update_profile" : "create_profile", payload, id ? "Perfil actualizado" : "Perfil creado"); $("#profile-dialog").close(); } catch (_) { /* keep form open */ }
+      try { await mutate(id ? "update_profile" : "create_profile", payload, id ? "Perfil actualizado" : "Perfil creado"); app.dialogDirty = false; $("#profile-dialog").close(); } catch (_) { /* keep form open */ }
     });
-    [$("#ticket-dialog"), $("#profile-dialog")].forEach((dialog) => dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); }));
+    [$("#ticket-create-form"), $("#profile-form")].forEach((form) => {
+      const markDialogDirty = () => { if (form.closest("dialog")?.open) app.dialogDirty = true; };
+      form.addEventListener("input", markDialogDirty);
+      form.addEventListener("change", markDialogDirty);
+    });
+    [$("#ticket-dialog"), $("#profile-dialog")].forEach((dialog) => {
+      dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+      dialog.addEventListener("close", () => { app.dialogDirty = false; });
+    });
+  }
+
+  async function boot() {
+    try {
+      await loadWorkspaceCatalog();
+    } catch (error) {
+      setConnected(false);
+      $("#loading-state").hidden = true;
+      $("#workspace-select").disabled = true;
+      showError(`No se pudo cargar el catálogo de proyectos. ${error.message}`);
+    }
   }
 
   wireEvents();
-  loadState();
-  setInterval(() => loadState({ quiet: true }), 15000);
+  syncWorkspaceControls();
+  boot();
+  setInterval(() => { if (app.workspaceId) loadState({ quiet: true }); }, 15000);
 })();

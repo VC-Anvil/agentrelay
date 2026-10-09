@@ -71,8 +71,11 @@ other efforts are rejected. Cloud-named models are rejected. Local endpoint acce
 alone does not attest where a custom Ollama server performs inference.
 
 Both bridges save the written deliverable under the configured working directory's
-`.agentrelay/artifacts/<uuid>/report.md`, attach that exact path as evidence and save
-a receipt. Recommended ticket profile, configured worker model and provider
+`.agentrelay/artifacts/<uuid>/report.md` by default. Append `--artifacts-dir` and an
+absolute output base to the adapter's trusted command to keep outputs outside a
+read-only project. Each run gets a fresh UUID subdirectory; relative bases resolve
+from the worker cwd. The bridge attaches the report's exact path as evidence and
+saves a receipt including cwd and output directory. Recommended ticket profile, configured worker model and provider
 attestation are distinct: generic workers declare model/effort; AgentRelay cannot
 prove which model a custom executable used. Reports still require independent review.
 
@@ -85,7 +88,9 @@ A trusted worker executable receives one UTF-8 JSON value on stdin:
 ```
 
 `context` is the full existing ticket context endpoint, including parents,
-dependencies, children, history and checkpoint. Stdout must contain exactly one
+dependencies, children, history, checkpoint, the target `profile` (or null) and the
+`profiles` catalog for help routing. These are recommendations, not proof of model
+availability. Stdout must contain exactly one
 JSON result (up to 1 MiB). Diagnostic output belongs on stderr, also bounded.
 
 ```json

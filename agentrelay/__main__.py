@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -9,17 +10,33 @@ from .store import DomainError, Store
 
 
 def main():
+    # JSON command output is UTF-8 even when Windows pipes default to a code page.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(prog="agentrelay", description="Local ticket coordination for people and agents")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("serve", "mcp", "export", "run", "backup"):
+    snapshot = sub.add_parser("snapshot", help="Freeze explicit project files outside their source tree")
+    snapshot.add_argument("--root", type=Path, required=True)
+    snapshot.add_argument("--file", action="append", required=True, dest="files")
+    snapshot.add_argument("--output", type=Path, required=True)
+    verify = sub.add_parser("verify-snapshot", help="Check the bytes of a captured input bundle")
+    verify.add_argument("directory", type=Path)
+    for name in ("serve", "mcp", "export", "run", "backup", "action", "context"):
         command = sub.add_parser(name)
         command.add_argument("--db", type=Path, help="SQLite database shared by web and MCP")
+        if name == "action":
+            command.add_argument("--input", type=Path, required=True, help="UTF-8 JSON file containing action and data")
+            command.add_argument("--actor", required=True, help="Audit identity; local declaration, not authentication")
+        if name == "context":
+            command.add_argument("--ticket", required=True)
         if name == "backup":
             command.add_argument("--output", type=Path, required=True, help="New SQLite file; refuses overwrite")
         if name == "serve":
             command.add_argument("--port", type=int, default=8787)
             command.add_argument("--demo", action="store_true", help="Seed isolated, clearly fictional demo data")
             command.add_argument("--workers", type=Path, help="Trusted JSON worker configuration; enables explicit launches")
+            command.add_argument("--workspaces", type=Path, help="Trusted registry of existing project databases")
         if name == "run":
             command.add_argument("--workers", type=Path, required=True)
             command.add_argument("--worker", required=True)
@@ -28,6 +45,46 @@ def main():
         if name == "mcp":
             command.add_argument("--actor", required=True, help="Stable agent identity, e.g. agent:sol-01")
     args = parser.parse_args()
+    if args.command == "serve" and args.workspaces:
+        if args.db or args.workers or args.demo:
+            parser.error("--workspaces cannot be combined with --db, --workers or --demo")
+        from .workspaces import load_workspaces
+        from .server import serve
+        workspaces = {}
+        try:
+            workspaces, default = load_workspaces(args.workspaces)
+            serve(workspaces[default].store, args.port, workspaces=workspaces, default_workspace_id=default)
+        except (DomainError, OSError) as exc:
+            parser.exit(1, f"Workspace configuration: {exc}\n")
+        finally:
+            for workspace in workspaces.values():
+                if workspace.execution:
+                    workspace.execution.close()
+        return
+    if args.command in {"snapshot", "verify-snapshot"}:
+        from .snapshots import create_snapshot, verify_snapshot
+        try:
+            result = (create_snapshot(args.root, args.files, args.output) if args.command == "snapshot"
+                      else verify_snapshot(args.directory))
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            if args.command == "verify-snapshot" and not result["valid"]:
+                raise SystemExit(1)
+        except (ValueError, OSError) as exc:
+            parser.exit(1, f"Snapshot failed: {exc}\n")
+        return
+    if args.command == "action":
+        # Validate the envelope before creating a database, and bound input reads.
+        try:
+            with args.input.open("rb") as stream:
+                raw = stream.read(1_048_577)
+            if len(raw) > 1_048_576:
+                raise ValueError("Action input exceeds 1 MiB")
+            request = json.loads(raw.decode("utf-8-sig"))
+            if (not isinstance(request, dict) or set(request) != {"action", "data"}
+                    or not isinstance(request["action"], str) or not isinstance(request["data"], dict)):
+                raise ValueError("Expected an object with exactly action (string) and data (object)")
+        except (ValueError, OSError) as exc:
+            parser.exit(1, f"Action input: {exc}\n")
     demo = getattr(args, "demo", False)
     database = args.db or Path.cwd() / ".agentrelay" / ("demo.sqlite" if demo else "workspace.sqlite")
     database = database.expanduser().resolve()
@@ -35,7 +92,14 @@ def main():
     store = Store(database)
     if demo:
         store.seed_demo()
-    if args.command == "serve":
+    if args.command in {"action", "context"}:
+        try:
+            result = (store.action(request["action"], request["data"], args.actor) if args.command == "action"
+                      else store.context(args.ticket))
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        except DomainError as exc:
+            parser.exit(1, f"{exc}\n")
+    elif args.command == "serve":
         from .server import serve
         from .execution import ExecutionManager
         try:

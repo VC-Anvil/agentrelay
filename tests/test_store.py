@@ -51,6 +51,17 @@ class StoreTests(unittest.TestCase):
                                                  "title": "Second writer"})
         self.assertEqual(independent.context(ticket["id"])["ticket"]["title"], "First writer")
 
+    def test_context_includes_recommendation_and_help_profile_catalog(self):
+        custom = self.store.action("create_profile", {"name": "Audio QA", "role": "reviewer",
+                                  "model": "configured-model", "effort": "high"})
+        ticket = self.create("Audio evidence", profile_id=custom["id"])
+        context = self.store.context(ticket["id"])
+        self.assertEqual(context["profile"], custom)
+        self.assertIn(custom, context["profiles"])
+        self.assertIsNone(context["ticket"]["actual_model"])
+        unassigned = self.create("Unassigned")
+        self.assertIsNone(self.store.context(unassigned["id"])["profile"])
+
     def test_active_ticket_rejects_other_agent_edits(self):
         ticket = self.create("Owned", acceptance=["Outcome checked"])
         ticket = self.store.action("claim_ticket", {"id": ticket["id"], "expected_revision": 1,

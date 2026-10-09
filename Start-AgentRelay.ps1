@@ -1,5 +1,6 @@
-param([switch]$Demo, [int]$Port = 8787, [string]$Workers, [string]$Db)
+param([switch]$Demo, [int]$Port = 8787, [string]$Workers, [string]$Db, [string]$Workspaces)
 $ErrorActionPreference = 'Stop'
+if ($Workspaces -and ($Demo -or $Workers -or $Db)) { throw '-Workspaces no se combina con -Demo, -Workers o -Db.' }
 $taskRoot = $PSScriptRoot
 $taskPython = Join-Path $taskRoot '.runtime\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $taskPython)) { $taskPython = Join-Path $taskRoot '.venv\Scripts\python.exe' }
@@ -21,6 +22,10 @@ if ($Workers) {
 if ($Db) {
     $taskDatabasePath = [System.IO.Path]::GetFullPath($Db)
     $taskArgs += @('--db', ('"' + $taskDatabasePath + '"'))
+}
+if ($Workspaces) {
+    $taskWorkspacePath = (Resolve-Path -LiteralPath $Workspaces).Path
+    $taskArgs += @('--workspaces', ('"' + $taskWorkspacePath + '"'))
 }
 $taskChild = Start-Process -FilePath $taskPython -ArgumentList $taskArgs -WorkingDirectory $taskRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $taskData "web-$Port.out.log") -RedirectStandardError (Join-Path $taskData "web-$Port.err.log") -PassThru
 $taskChild.Id | Set-Content -LiteralPath (Join-Path $taskData "web-$Port.pid")

@@ -249,8 +249,11 @@ class Store:
             parent = self._ticket(db, ticket["parent_id"]) if ticket["parent_id"] else None
             dependencies = [self._ticket(db, dep) for dep in ticket["depends_on"]]
             children = [self._ticket(db, r[0]) for r in db.execute("SELECT id FROM tickets WHERE parent_id=? ORDER BY id", (ticket_id,))]
+            profiles = [self._profile(row) for row in db.execute("SELECT * FROM profiles ORDER BY id")]
             context = {"ticket": ticket, "parent": parent, "dependencies": dependencies,
                        "children": children, "events": self._events(db, "WHERE ticket_id=?", (ticket_id,)),
+                       "profile": next((p for p in profiles if p["id"] == ticket["profile_id"]), None),
+                       "profiles": profiles,
                        "instructions": "Review acceptance, dependencies, checkpoint and evidence. Evidence references require independent verification. Record progress with checkpoint, then submit for review."}
             db.commit()
             return context

@@ -33,9 +33,16 @@
           <h1 id="page-title">Proyecto</h1>
           <p id="page-subtitle">Coordina el trabajo humano y de agentes externos con evidencia trazable.</p>
         </div>
-        <div class="top-actions">
-          <button class="button button-quiet" id="export-button" type="button">Exportar JSON</button>
-          <button class="button button-primary" id="new-ticket-button" type="button"><span aria-hidden="true">＋</span> Nueva tarea</button>
+        <div class="topbar-tools">
+          <label class="workspace-switcher" for="workspace-select">
+            <span>Proyecto activo</span>
+            <select id="workspace-select" disabled><option value="">Cargando proyectos…</option></select>
+            <small id="workspace-database">Catálogo local</small>
+          </label>
+          <div class="top-actions">
+            <button class="button button-quiet" id="export-button" type="button">Exportar JSON</button>
+            <button class="button button-primary" id="new-ticket-button" type="button"><span aria-hidden="true">＋</span> Nueva tarea</button>
+          </div>
         </div>
       </header>
 
