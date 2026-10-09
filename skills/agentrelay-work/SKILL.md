@@ -7,6 +7,14 @@ description: Coordinate authorized work through AgentRelay tickets, plans, hando
 
 Use the configured AgentRelay MCP connection and confirm it represents the user's intended project; demo data is fictional. Prefer MCP. If it is unavailable, use the local `agentrelay action` CLI only when that executable, exact database and local action are already available and authorized. Do not install anything, guess a database or claim an update that did not occur.
 
+When coordinating several authorized projects and the operator supplied a trusted
+registry, the optional CLI `agentrelay overview --workspaces REGISTRY --limit 5`
+summarizes ready work, reviews and blockers without activating execution managers.
+Each category has a complete total and a limited sample; absence from a sample
+does not mean absence from the project. Keep the project ID and database with
+every ticket ID, and fetch current context in that database before acting.
+An overview does not authorize starting proposed work or switching the user's task.
+
 ## Take work
 
 Preserve a ticket the user chose. Fetch it directly with `get_ticket_context`; do not replace it with a higher-priority item. Otherwise resume this connection actor's unfinished work before taking another ticket. Use small, filtered `list_tickets` calls rather than polling or paging through the whole catalog. Check owned `in_progress` work first, then owned blocked/review work that needs a handoff; only then request `ready_only=true` work. Readiness proves dependencies, not authorization to execute.

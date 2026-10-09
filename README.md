@@ -6,7 +6,7 @@
 
 Turn goals into prioritized tickets, share durable context between agents, and keep delivery separate from acceptance. Humans use the web board; agents use the MCP server. Both operate on the same SQLite database.
 
-AgentRelay 0.7.1 combines a persistent ticket board, an MCP server and optional worker execution. Agents find work through filtered summaries and open current context with recent history; older audit events remain available by cursor. Register multiple local projects, import complete plans without duplicates, capture exact review inputs and detect when those inputs change. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
+AgentRelay 0.8 combines a persistent ticket board, an MCP server and optional worker execution. Agents find work through filtered summaries and open current context with recent history; older audit events remain available by cursor. Register multiple local projects, inspect their priorities without starting workers, import complete plans without duplicates, capture exact review inputs and detect when those inputs change. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
 
 ![AgentRelay local board with explicitly fictional demo data](docs/preview.jpg)
 
@@ -49,6 +49,7 @@ Windows quick launch: `powershell -File .\Start-AgentRelay.ps1 -Demo`. It prefer
 - Bounded priority queue processing and online SQLite backup/restore.
 - Bounded input snapshots with SHA-256 verification, external artifact directories and a JSON action CLI for active-project pilots.
 - A trusted multi-project registry and explicit project selection for every browser request; matching ticket IDs in different databases stay separate.
+- `overview --workspaces /absolute/workspaces.json` summarizes priorities, review queues and blockers across registered projects without activating execution. [Overview contract and limits](docs/OVERVIEW.md).
 - Atomic, retry-safe plan imports with local forward references and backlog defaults, plus read-only comparison of captured inputs against current sources. [Usage and example](docs/PLANS_AND_FRESHNESS.md).
 
 The initial profiles reflect the local author's workflow: Astra/high coordinates, with Sol, Terra and Luna as specialists. These names do not mean those models are connected or available. Add your own provider/model profiles in **Perfiles**. The Astra coordinator profile is deliberately locked under the current workspace policy.

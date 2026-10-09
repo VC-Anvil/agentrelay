@@ -62,8 +62,8 @@ def require_agentrelay_database(database):
     return path
 
 
-def load_workspaces(config_path):
-    """Load at most 16 existing AgentRelay databases and optional trusted workers."""
+def load_workspaces(config_path, *, enable_execution=True):
+    """Load existing AgentRelay databases, optionally activating configured workers."""
     config_path = Path(config_path).expanduser().resolve()
     try:
         with config_path.open("rb") as stream:
@@ -115,7 +115,7 @@ def load_workspaces(config_path):
         for identity, name, path, worker_path in prepared:
             store = Store(path)
             execution = None
-            if worker_path is not None:
+            if enable_execution and worker_path is not None:
                 from .execution import ExecutionManager
                 execution = ExecutionManager(store, worker_path)
             workspaces[identity] = Workspace(identity, name, store, execution)

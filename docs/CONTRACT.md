@@ -1,4 +1,4 @@
-# AgentRelay v0.7.1 contract
+# AgentRelay v0.8 contract
 
 Local-first ticket coordination for humans, external agents and explicitly configured workers. SQLite is authoritative. UI language Spanish; source/docs English. Default host 127.0.0.1:8787. Root owns integration, HTTP, MCP, adapters, docs and packaging; execution specialist owns execution.py/test_execution.py; frontend owner owns static/*.
 
@@ -8,7 +8,7 @@ Local-first ticket coordination for humans, external agents and explicitly confi
 - GET /api/tickets/{id}/context -> {ticket, parent, dependencies, children, events, instructions, profile, profiles}. Includes evidence/checkpoint, blocked readiness, recommended target profile (or null) and the profile catalog for help routing in the same read transaction. Recommendations are not execution attestations.
 - POST /api/actions -> {action: string, actor: string, data: object}; returns {result: object, state: State}. actor defaults human in UI. Action errors HTTP 400 (validation), 404, 409 (conflict). JSON error {error: string}. All mutations via this endpoint. UI sends expected_revision on update and lifecycle actions.
 - GET /api/export -> complete versioned JSON export.
-- GET /api/health -> {status: 'ok', version: '0.7.1'}.
+- GET /api/health -> {status: 'ok', version: '0.8.0'}.
 - GET /api/workspaces -> {workspaces:[{id,name,database,demo}],default_workspace_id}. Trusted startup registry only; no browser path input or registry mutation. Multi-project state/context/export/actions require X-AgentRelay-Workspace with a registered ID; missing is 400 and unknown is 404. Single-project requests remain compatible without it. State, context and HTTP export include workspace identity.
 - State also contains `demo`, `version`, and `execution: {enabled, workers, runs}`. Run and ticket statuses are read in one SQLite snapshot. Workers expose only id/name/model/effort/profile_ids/timeout_seconds. Run fields: id/ticket_id/worker_id/status/started_at/finished_at/summary/error/model/effort, newest 100.
 - POST actions `start_run {ticket_id,worker_id,expected_revision}` and `cancel_run {run_id}` require startup `--workers`. Normal result/state envelope applies. Execution protocol and failure statuses are in [EXECUTION.md](EXECUTION.md).
@@ -84,6 +84,21 @@ by default. Python `Store.ticket_events(ticket_id, limit=20, before_id=None)` is
 the read-only service behind cursor pages. Export and backup retain full history.
 
 ## Python service
+
+CLI `overview --workspaces REGISTRY --limit 5` and Python
+`project_overview(config_path, limit=5)` return a versioned multi-project summary:
+`{schema_version:1,default_workspace_id,count,limit,projects}`. Each project has
+`id,name,database,demo,stats,urgent_open,ready,review,blocked`. Urgent open is an
+integer excluding closed tickets. Each of the other three categories contains
+`{total,tickets}` with up to 1–20 summaries (default 5), ordered by priority,
+creation time and ID. Blocked includes manual blocks and queued tickets with
+derived blockers; review is a status, not an approval guarantee.
+
+Overview reads one Store snapshot per project and does not initialize execution
+managers, read worker configs, recover runs or claim work. The workspace loader
+accepts `enable_execution=False` for this path; its existing default is unchanged.
+Store migrations on recognized databases remain possible. There is no global
+cross-project snapshot or claimed SQL/token optimization. See [overview](OVERVIEW.md).
 
 CLI `context`, `history`, `export` and `backup` require an existing recognized
 AgentRelay database before calling `Store`. Missing, corrupt, empty and unrelated

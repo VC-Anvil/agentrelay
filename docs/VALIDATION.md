@@ -1,4 +1,10 @@
-# Validation — AgentRelay 0.7.1
+# AgentRelay validation
+
+The current 0.8 candidate is covered by [multi-project overview validation](VALIDATION_0_8.md).
+Its package and local checks are prepared; final ticket acceptance remains
+pending. No pending acceptance or CI job is counted as a successful review.
+
+## Previous release — AgentRelay 0.7.1
 
 Date: 2026-10-10 (Europe/Madrid). Windows, Python 3.12.14, MCP SDK 1.30.0.
 Previous release: [0.7 database and graph robustness](VALIDATION_0_7.md).
