@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .run_results import MAX_RESULT_JSON
 from .store import DomainError, EFFORTS, Store
 
 if os.name == "nt":
@@ -179,8 +180,12 @@ class ExecutionManager:
                 worker_id TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL,
                 finished_at TEXT, summary TEXT NOT NULL, error TEXT NOT NULL,
                 model TEXT NOT NULL, effort TEXT NOT NULL, claim_revision INTEGER NOT NULL,
-                actor TEXT NOT NULL, owner_instance TEXT NOT NULL, owner_pid INTEGER NOT NULL
+                actor TEXT NOT NULL, owner_instance TEXT NOT NULL, owner_pid INTEGER NOT NULL,
+                result_json TEXT
             )""")
+            columns = {row[1] for row in db.execute("PRAGMA table_info(execution_runs)")}
+            if "result_json" not in columns:
+                db.execute("ALTER TABLE execution_runs ADD COLUMN result_json TEXT")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_running_run ON execution_runs((1)) WHERE status='running'")
 
     @staticmethod
@@ -378,7 +383,13 @@ class ExecutionManager:
                     except (UnicodeError, json.JSONDecodeError, DomainError):
                         self._finalize_error(handle.run_id, "Worker returned invalid protocol JSON", "failed")
                         return
-                    self._apply_result(handle.run_id, result)
+                    try:
+                        captured = self._persist_result(handle.run_id, result)
+                    except DomainError:
+                        self._finalize_error(handle.run_id, "Worker result exceeded storage limit or invalid JSON", "failed")
+                        return
+                    if captured:
+                        self._apply_result(handle.run_id, result)
                 finally:
                     if process is not None and process.poll() is None:
                         self._stop_process(process)
@@ -418,6 +429,19 @@ class ExecutionManager:
         return {"outcome": outcome, "summary": summary, "evidence": evidence,
                 "title": title, "description": description, "profile_id": profile_id,
                 "children": children}
+
+    def _persist_result(self, run_id: str, result: dict) -> bool:
+        """Capture validated protocol output before any ticket mutation, if still running."""
+        try:
+            serialized = json.dumps(result, ensure_ascii=True, allow_nan=False, separators=(",", ":"))
+        except (TypeError, ValueError) as exc:
+            raise DomainError("worker result is not strict JSON") from exc
+        if len(serialized.encode("ascii")) > MAX_RESULT_JSON:
+            raise DomainError("worker result exceeds storage limit")
+        with self.store._write() as db:
+            updated = db.execute("UPDATE execution_runs SET result_json=? WHERE id=? AND status='running'",
+                                 (serialized, run_id))
+            return updated.rowcount == 1
 
     def _apply_result(self, run_id: str, result: dict):
         try:

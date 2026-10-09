@@ -1,4 +1,4 @@
-# AgentRelay v0.8 contract
+# AgentRelay v0.9 contract
 
 Local-first ticket coordination for humans, external agents and explicitly configured workers. SQLite is authoritative. UI language Spanish; source/docs English. Default host 127.0.0.1:8787. Root owns integration, HTTP, MCP, adapters, docs and packaging; execution specialist owns execution.py/test_execution.py; frontend owner owns static/*.
 
@@ -8,7 +8,7 @@ Local-first ticket coordination for humans, external agents and explicitly confi
 - GET /api/tickets/{id}/context -> {ticket, parent, dependencies, children, events, instructions, profile, profiles}. Includes evidence/checkpoint, blocked readiness, recommended target profile (or null) and the profile catalog for help routing in the same read transaction. Recommendations are not execution attestations.
 - POST /api/actions -> {action: string, actor: string, data: object}; returns {result: object, state: State}. actor defaults human in UI. Action errors HTTP 400 (validation), 404, 409 (conflict). JSON error {error: string}. All mutations via this endpoint. UI sends expected_revision on update and lifecycle actions.
 - GET /api/export -> complete versioned JSON export.
-- GET /api/health -> {status: 'ok', version: '0.8.0'}.
+- GET /api/health -> {status: 'ok', version: '0.9.0'}.
 - GET /api/workspaces -> {workspaces:[{id,name,database,demo}],default_workspace_id}. Trusted startup registry only; no browser path input or registry mutation. Multi-project state/context/export/actions require X-AgentRelay-Workspace with a registered ID; missing is 400 and unknown is 404. Single-project requests remain compatible without it. State, context and HTTP export include workspace identity.
 - State also contains `demo`, `version`, and `execution: {enabled, workers, runs}`. Run and ticket statuses are read in one SQLite snapshot. Workers expose only id/name/model/effort/profile_ids/timeout_seconds. Run fields: id/ticket_id/worker_id/status/started_at/finished_at/summary/error/model/effort, newest 100.
 - POST actions `start_run {ticket_id,worker_id,expected_revision}` and `cancel_run {run_id}` require startup `--workers`. Normal result/state envelope applies. Execution protocol and failure statuses are in [EXECUTION.md](EXECUTION.md).
@@ -100,7 +100,23 @@ accepts `enable_execution=False` for this path; its existing default is unchange
 Store migrations on recognized databases remain possible. There is no global
 cross-project snapshot or claimed SQL/token optimization. See [overview](OVERVIEW.md).
 
-CLI `context`, `history`, `export` and `backup` require an existing recognized
+CLI `run-result --db DATABASE --run RUN_ID`, MCP `get_run_result(run_id)` and Python
+`agentrelay.run_results.get_run_result(store, run_id)` read one retained worker
+proposal. The response is `{schema_version:1,run,result,current_ticket}`. Run adds
+`claim_revision` and `actor` to the ordinary public run fields; current ticket
+contains `id,revision,status,assignee`. The proposal and metadata come from one
+SQLite read transaction. A missing run returns 404; an empty/non-string ID is 400.
+
+The execution manager captures normalized protocol output before applying it,
+in a separate transaction, so conflicts and domain rejection retain the proposal.
+Capture requires the run to remain running. A cancellation or crash after capture
+can leave an unapplied proposal. Earlier interruption, invalid output and older
+runs can return null. Retrieval starts no worker or execution manager and does
+not apply or approve anything. Read full current context and evaluate relevance
+before any authorized mutation. SQLite backup includes proposals; bulk run
+history and JSON export omit their bodies. [Full contract](RUN_RESULTS.md).
+
+CLI `context`, `history`, `run-result`, `export` and `backup` require an existing recognized
 AgentRelay database before calling `Store`. Missing, corrupt, empty and unrelated
 files are rejected without bootstrapping a project or creating backup output.
 The workspace registry uses the same read-only SQLite preflight. Recognized

@@ -121,6 +121,13 @@ it never automatically retries or declares success.
 Process logs are local diagnostics, not served to the browser. Keep the database,
 logs, worker configs, receipts and provider authentication outside version control.
 
+New runs retain their parsed protocol proposal in SQLite before attempting ticket
+application. Use the explicit CLI `run-result --db DATABASE --run RUN_ID` or MCP
+`get_run_result` to compare a conflicted proposal with current ticket context.
+This does not reapply output or accept evidence. Older runs can have no retained
+proposal even when local diagnostic logs contain output. See [run results](RUN_RESULTS.md)
+for the response contract and cancellation/crash limits.
+
 ## Backup and restore
 
 JSON export includes ticket/profile/audit/run history for inspection. For a complete
@@ -135,3 +142,6 @@ any outstanding files/processes, and start the server with `--db` pointing to th
 backup. The backup contains the demo marker and execution history, but not external
 artifact files, worker config or credentials; preserve those separately. An active
 run in a backup is treated as interrupted, never silently resumed.
+
+SQLite backup also preserves retained worker proposals. Bulk JSON exports and
+run summaries omit proposal bodies; use the explicit single-run query to inspect one.

@@ -1,8 +1,9 @@
 # AgentRelay validation
 
-The current 0.8 candidate is covered by [multi-project overview validation](VALIDATION_0_8.md).
-Its package and local checks are prepared; final ticket acceptance remains
-pending. No pending acceptance or CI job is counted as a successful review.
+The current 0.9 work is covered by [retained worker proposal validation](VALIDATION_0_9.md).
+Earlier [multi-project overview validation](VALIDATION_0_8.md) remains available;
+its pending ticket acceptance has not been changed. No pending acceptance or
+CI job is counted as a successful review.
 
 ## Previous release — AgentRelay 0.7.1
 
