@@ -59,7 +59,8 @@ class HTTPTests(unittest.TestCase):
         action = {"action": "create_ticket", "data": {"title": "Attack"}}
         for headers in ({"Origin": "https://example.org"}, {"Host": "evil.test"},
                         {"X-AgentRelay-Client": ""}, {"Sec-Fetch-Site": "cross-site"}):
-            self.assertEqual(self.request("POST", "/api/actions", action, headers)[0], 403)
+            with self.subTest(headers=headers):
+                self.assertEqual(self.request("POST", "/api/actions", action, headers)[0], 403)
         self.assertEqual(self.request("POST", "/api/actions", {**action, "actor": "agent:spoof"})[0], 403)
         self.assertEqual(self.request("GET", "/%2e%2e/README.md")[0], 404)
         self.assertEqual(self.store.state()["tickets"], [])

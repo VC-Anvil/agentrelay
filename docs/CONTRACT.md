@@ -1,4 +1,4 @@
-# AgentRelay v0.4 contract
+# AgentRelay v0.5 contract
 
 Local-first ticket coordination for humans, external agents and explicitly configured workers. SQLite is authoritative. UI language Spanish; source/docs English. Default host 127.0.0.1:8787. Root owns integration, HTTP, MCP, adapters, docs and packaging; execution specialist owns execution.py/test_execution.py; frontend owner owns static/*.
 
@@ -8,7 +8,7 @@ Local-first ticket coordination for humans, external agents and explicitly confi
 - GET /api/tickets/{id}/context -> {ticket, parent, dependencies, children, events, instructions, profile, profiles}. Includes evidence/checkpoint, blocked readiness, recommended target profile (or null) and the profile catalog for help routing in the same read transaction. Recommendations are not execution attestations.
 - POST /api/actions -> {action: string, actor: string, data: object}; returns {result: object, state: State}. actor defaults human in UI. Action errors HTTP 400 (validation), 404, 409 (conflict). JSON error {error: string}. All mutations via this endpoint. UI sends expected_revision on update and lifecycle actions.
 - GET /api/export -> complete versioned JSON export.
-- GET /api/health -> {status: 'ok', version: '0.4.0'}.
+- GET /api/health -> {status: 'ok', version: '0.5.0'}.
 - GET /api/workspaces -> {workspaces:[{id,name,database,demo}],default_workspace_id}. Trusted startup registry only; no browser path input or registry mutation. Multi-project state/context/export/actions require X-AgentRelay-Workspace with a registered ID; missing is 400 and unknown is 404. Single-project requests remain compatible without it. State, context and HTTP export include workspace identity.
 - State also contains `demo`, `version`, and `execution: {enabled, workers, runs}`. Run and ticket statuses are read in one SQLite snapshot. Workers expose only id/name/model/effort/profile_ids/timeout_seconds. Run fields: id/ticket_id/worker_id/status/started_at/finished_at/summary/error/model/effort, newest 100.
 - POST actions `start_run {ticket_id,worker_id,expected_revision}` and `cancel_run {run_id}` require startup `--workers`. Normal result/state envelope applies. Execution protocol and failure statuses are in [EXECUTION.md](EXECUTION.md).
@@ -38,6 +38,27 @@ id string, name string, role string, provider string, model string, effort strin
 - update_profile: id + profile editable fields.
 
 All relations must exist, dependency and parent cycles rejected (including execution deadlocks between hierarchy and dependencies). Audit actor/time/action/ticket_id/details. SQLite transactions, foreign keys/WAL, optimistic revisions. No destructive deletion/reset UI. Events include id, ticket_id nullable, actor, action, details object, created_at.
+
+## MCP listing
+
+`list_tickets(status?,priority?,profile_id?,ready_only=false,assignee?,limit=20,offset=0,include_details=false)`
+filters first, then orders by priority/created_at/id and paginates. Integers and
+booleans are strict; limit is 1..100, offset >=0. Unknown status/priority/profile
+filters and empty/nonexact owner identities fail rather than silently returning
+unfiltered data. Owner matching uses the exact stored assignee string.
+
+Returns `{tickets,actor,count,total,offset,limit,next_offset}`. `count` is the page
+size; `total` counts matching tickets; `next_offset` is null on the final page.
+Default summaries contain `id,title,type,status,priority,parent_id,profile_id,
+assignee,revision,ready,blockers`. `include_details=true` returns full ticket
+objects for the page. The 0.5 defaults differ from the unpaginated full objects in
+0.4; clients must handle this change. Fetch current context before mutations.
+
+Each call uses one Store snapshot. Offset pages do not share a snapshot across
+calls; concurrent changes can shift positions. This bounds ticket count and field
+selection, not string lengths, bytes, model tokens, quota or SQL work. The service
+still reads the full local Store state before filtering; no query performance
+improvement is claimed.
 
 ## Python service
 

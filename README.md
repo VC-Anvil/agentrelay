@@ -6,7 +6,7 @@
 
 Turn goals into prioritized tickets, share durable context between agents, and keep delivery separate from acceptance. Humans use the web board; agents use the MCP server. Both operate on the same SQLite database.
 
-AgentRelay 0.4 combines a persistent ticket board, an MCP server and optional worker execution. Register multiple local projects, import complete plans without duplicates, capture exact review inputs and detect when those inputs change. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
+AgentRelay 0.5 combines a persistent ticket board, an MCP server and optional worker execution. Agents find work through filtered, paginated summaries, then open the exact context they need. Register multiple local projects, import complete plans without duplicates, capture exact review inputs and detect when those inputs change. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
 
 ![AgentRelay local board with explicitly fictional demo data](docs/preview.jpg)
 
@@ -87,6 +87,14 @@ On Windows, use the environment's `Scripts/agentrelay.exe`. From an uninstalled 
 Use a different stable actor name for each worker/reviewer connection. The actor is fixed by the launch command, rather than supplied with each tool call. The MCP layer is for trusted local collaborators; it is not a multi-tenant authentication boundary.
 
 Useful tools: `list_tickets`, `get_ticket_context`, `list_profiles`, `create_ticket`, `create_plan`, `update_ticket`, `claim_ticket`, `save_checkpoint`, `request_help`, `split_ticket`, `transition_ticket`, `submit_ticket`, `review_ticket`, `add_comment`. `agentrelay://workflow` exposes the handoff rules as a resource.
+
+`list_tickets` returns up to 20 summaries by default, ordered by priority. Filter
+with `assignee` to resume owned work or `ready_only` to find available tasks.
+Follow `next_offset` only if needed, and use `get_ticket_context` before claiming
+or editing. `include_details: true` restores full ticket fields for that page;
+`limit` accepts 1–100. **Clients upgrading from 0.4 must handle pagination and
+summary fields** instead of assuming one call returns every complete ticket.
+Pages are fresh reads and can shift when another participant changes the board.
 
 ## A real workflow
 
