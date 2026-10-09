@@ -47,7 +47,8 @@ output.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
 class AdapterArtifactTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="agentrelay-adapter-")
-        self.root = Path(self.tmp.name)
+        # Windows TEMP may use an 8.3 alias; production paths are canonical.
+        self.root = Path(self.tmp.name).resolve()
         self.project = self.root / "project"
         self.project.mkdir()
         (self.project / "existing.txt").write_text("unchanged", encoding="utf-8")

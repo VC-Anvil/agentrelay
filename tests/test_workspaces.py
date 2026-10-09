@@ -18,7 +18,8 @@ from agentrelay.workspaces import Workspace, load_workspaces
 class WorkspaceTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="agentrelay-workspaces-")
-        self.root = Path(self.temp.name)
+        # Windows runners can expose TEMP through its 8.3 alias.
+        self.root = Path(self.temp.name).resolve()
         self.stores = {key: Store(self.root / f"{key}.sqlite") for key in ("alpha", "beta")}
         for key, store in self.stores.items():
             store.action("create_ticket", {"title": key, "acceptance": [f"Check {key}"]})

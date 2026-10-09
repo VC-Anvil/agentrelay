@@ -84,6 +84,12 @@ distribution hashes are saved in `dist/SHA256SUMS-0.3.0.txt`.
 The [CI matrix](https://github.com/VC-Anvil/agentrelay/actions/workflows/tests.yml)
 records exact per-commit outcomes on Windows/Linux and Python 3.11/3.12.
 
+The first v0.3 CI run passed both Linux jobs but exposed five Windows assertions
+comparing an 8.3 TEMP alias with its canonical path; the other Windows job was
+cancelled by matrix fail-fast. The three affected fixtures now resolve their
+temporary roots, preserving exact path, content and isolation assertions. All
+eight affected tests passed locally; the corrective commit is checked in CI.
+
 The reviewer sandbox could not open SQLite files under its own temporary directory;
 those setup failures are not counted as successful tests. The integrator's normal
 environment ran the actual suite above. No filesystem sandbox was weakened by the

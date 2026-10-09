@@ -45,7 +45,8 @@ json.dump({'outcome': 'submit', 'summary': marker + ' fixture report',
 class WorkspaceExecutionTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="agentrelay-workspace-execution-")
-        self.root = Path(self.temp.name)
+        # Match the canonical working directory reported by the subprocess.
+        self.root = Path(self.temp.name).resolve()
         self.server = None
         self.thread = None
         self.managers = []
