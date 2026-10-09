@@ -1,6 +1,6 @@
 # AgentRelay validation
 
-The current 0.11 work is covered by [report integrity validation](VALIDATION_0_11.md).
+The current 0.11.1 work is covered by [report integrity and stored-result validation](VALIDATION_0_11.md).
 Earlier [execution discovery validation](VALIDATION_0_10.md) remains available.
 The preceding [retained worker proposal validation](VALIDATION_0_9.md) is archived.
 Earlier [multi-project overview validation](VALIDATION_0_8.md) remains available;

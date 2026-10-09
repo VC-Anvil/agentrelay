@@ -109,6 +109,22 @@ class CliRunResultTests(unittest.TestCase):
         self.assertNotEqual(missing_option.returncode, 0)
         self.assertEqual(domain_rows(self.database), before)
 
+    def test_deep_stored_result_is_controlled_and_other_result_remains_readable(self):
+        raw = '{"payload":' + '[' * 5000 + '0' + ']' * 5000 + '}'
+        with self.store._write() as database:
+            database.execute("UPDATE execution_runs SET result_json=? WHERE id='run-other'", (raw,))
+        before = domain_rows(self.database)
+
+        rejected = self.command("run-result", "--db", self.database, "--run", "run-other")
+        self.assertEqual(rejected.returncode, 1)
+        self.assertEqual(rejected.stdout, "")
+        self.assertIn("stored worker result is invalid", rejected.stderr)
+        self.assertNotIn("Traceback", rejected.stderr)
+        selected = self.command("run-result", "--db", self.database, "--run", "run-á")
+        self.assertEqual(selected.returncode, 0, selected.stderr)
+        self.assertEqual(json.loads(selected.stdout)["result"], self.proposal)
+        self.assertEqual(domain_rows(self.database), before)
+
     def test_missing_and_foreign_database_are_not_created_or_mutated(self):
         missing = self.root / "missing" / "typo.sqlite"
         result = self.command("run-result", "--db", missing, "--run", "run-á")

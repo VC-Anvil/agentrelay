@@ -3,6 +3,23 @@
 Date: 2026-10-10 (Europe/Madrid). Windows, Python 3.12.14, MCP SDK 1.30.0.
 Previous release: [execution discovery](VALIDATION_0_10.md).
 
+## Patch 0.11.1 — excessive depth in retained results
+
+An isolated SQLite fixture containing 10,013 bytes of deeply nested JSON caused
+`get_run_result` to raise an unhandled `RecursionError`; its CLI printed a
+traceback. This was synthetic malformed stored data, not a damaged pilot record.
+The reader now converts that decoder failure to the existing invalid-result
+domain error (500); the CLI exits 1 with a concise diagnostic. It neither repairs
+nor replaces the retained bytes.
+
+The service regression and a CLI subprocess regression verify that the selected
+data remains unchanged and another valid result is still readable. Independent
+root review confirmed the original reproduction now fails cleanly and all its
+ticket, profile, event, dependency and run rows remain identical. The full suite
+passed **145 tests with three Windows symlink skips (148 total)** in 46.323 seconds.
+The earlier 0.11.0 commit passed all four Windows/Linux Python 3.11/3.12 CI jobs;
+the patch requires its own CI result. No pilot or game data was modified.
+
 ## Evidence and change
 
 The historical Dirt Riot delivery links its report, but its adjacent old receipt

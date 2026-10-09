@@ -40,7 +40,7 @@ def get_run_result(store: Store, run_id: str) -> dict:
             raw_result = db.execute("SELECT result_json FROM execution_runs WHERE id=?", (run_id,)).fetchone()[0]
             try:
                 result = json.loads(raw_result, parse_constant=_invalid_constant)
-            except (TypeError, ValueError, UnicodeError) as exc:
+            except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
                 raise DomainError("stored worker result is invalid", 500) from exc
             if not isinstance(result, dict):
                 raise DomainError("stored worker result is not an object", 500)
