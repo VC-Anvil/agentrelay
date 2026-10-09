@@ -26,6 +26,9 @@ def main():
     compare = sub.add_parser("compare-snapshot", help="Compare captured inputs with an explicit current source root")
     compare.add_argument("directory", type=Path)
     compare.add_argument("--root", type=Path, required=True)
+    report = sub.add_parser("verify-report", help="Compare a fixed report with its adjacent host receipt")
+    report.add_argument("directory", type=Path, help="Directory containing receipt.json and report.md")
+    report.add_argument("--receipt-sha256", help="Previously trusted SHA-256 anchor for receipt.json")
     overview = sub.add_parser("overview", help="Read a bounded summary of configured projects")
     overview.add_argument("--workspaces", type=Path, required=True, help="Explicit trusted project registry")
     overview.add_argument("--limit", type=int, default=5, help="Tickets per category in each project (1..20)")
@@ -67,6 +70,16 @@ def main():
         if name == "mcp":
             command.add_argument("--actor", required=True, help="Stable agent identity, e.g. agent:sol-01")
     args = parser.parse_args()
+    if args.command == "verify-report":
+        from .report_integrity import verify_report
+        try:
+            result = verify_report(args.directory, receipt_sha256=args.receipt_sha256)
+        except (ValueError, OSError) as exc:
+            parser.exit(1, f"Report verification failed: {exc}\n")
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if result["status"] != "unchanged":
+            raise SystemExit(2)
+        return
     if args.command == "overview":
         from .overview import project_overview
         try:

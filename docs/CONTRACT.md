@@ -1,4 +1,4 @@
-# AgentRelay v0.10 contract
+# AgentRelay v0.11 contract
 
 Local-first ticket coordination for humans, external agents and explicitly configured workers. SQLite is authoritative. UI language Spanish; source/docs English. Default host 127.0.0.1:8787. Root owns integration, HTTP, MCP, adapters, docs and packaging; execution specialist owns execution.py/test_execution.py; frontend owner owns static/*.
 
@@ -8,7 +8,7 @@ Local-first ticket coordination for humans, external agents and explicitly confi
 - GET /api/tickets/{id}/context -> {ticket, parent, dependencies, children, events, instructions, profile, profiles}. Includes evidence/checkpoint, blocked readiness, recommended target profile (or null) and the profile catalog for help routing in the same read transaction. Recommendations are not execution attestations.
 - POST /api/actions -> {action: string, actor: string, data: object}; returns {result: object, state: State}. actor defaults human in UI. Action errors HTTP 400 (validation), 404, 409 (conflict). JSON error {error: string}. All mutations via this endpoint. UI sends expected_revision on update and lifecycle actions.
 - GET /api/export -> complete versioned JSON export.
-- GET /api/health -> {status: 'ok', version: '0.10.0'}.
+- GET /api/health -> {status: 'ok', version: '0.11.0'}.
 - GET /api/workspaces -> {workspaces:[{id,name,database,demo}],default_workspace_id}. Trusted startup registry only; no browser path input or registry mutation. Multi-project state/context/export/actions require X-AgentRelay-Workspace with a registered ID; missing is 400 and unknown is 404. Single-project requests remain compatible without it. State, context and HTTP export include workspace identity.
 - State also contains `demo`, `version`, and `execution: {enabled, workers, runs}`. Run and ticket statuses are read in one SQLite snapshot. Workers expose only id/name/model/effort/profile_ids/timeout_seconds. Run fields: id/ticket_id/worker_id/status/started_at/finished_at/summary/error/model/effort, newest 100.
 - POST actions `start_run {ticket_id,worker_id,expected_revision}` and `cancel_run {run_id}` require startup `--workers`. Normal result/state envelope applies. Execution protocol and failure statuses are in [EXECUTION.md](EXECUTION.md).
@@ -141,5 +141,22 @@ replacement between validation and opening. Explicit initialization through
 `serve`, `action`, `mcp`, `run` and direct `Store(path)` remains compatible.
 
 `Store(path)` initializes schema only, no demo by default. `state()`, `context(ticket_id)`, `export()`, `action(action, data, actor='human')`. `DomainError(message, status=400)` has .status. `seed_demo()` explicit idempotent method. Store connections per operation, concurrent safe. Standard-library only.
+
+CLI `verify-report DIRECTORY [--receipt-sha256 HASH]` and Python
+`agentrelay.report_integrity.verify_report(directory, receipt_sha256=None)` compare
+fixed `receipt.json` and `report.md` files within an explicitly selected directory.
+Each file is limited to 1 MiB. Only regular files are read; link/reparse paths and
+changes detected during reading are rejected. Receipt metadata never chooses a
+path. The command bypasses database initialization and has no MCP equivalent.
+
+Returns `{schema_version:1,directory,status,reason,expected_report_sha256,
+actual_report_sha256,receipt_sha256,expected_receipt_sha256,receipt_matches_expected}`.
+Unknown values are null. States are `unchanged`, `modified`, `missing` and
+`uncheckable`; CLI exits 0 for unchanged, 2 for other result states, 1 for invalid
+directory selection or malformed anchor. Argparse usage failures remain 2 without
+result JSON. Optional receipt hash mismatch stops before reading the report.
+Legacy receipts without a report hash remain uncheckable; no baseline is invented.
+The receipt is reread after the report and directory identities checked; this is
+not an atomic filesystem snapshot or authentication. [Details](REPORT_INTEGRITY.md).
 
 Demo is clearly labeled fictitious, belongs in separate --demo DB, never automatic user content. At least six meaningful tickets spanning statuses, priorities, nested tasks, help, and evidence. No fake running agents or invented usage metrics.

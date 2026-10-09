@@ -75,7 +75,11 @@ Both bridges save the written deliverable under the configured working directory
 absolute output base to the adapter's trusted command to keep outputs outside a
 read-only project. Each run gets a fresh UUID subdirectory; relative bases resolve
 from the worker cwd. The bridge attaches the report's exact path as evidence and
-saves a receipt including cwd and output directory. Recommended ticket profile, configured worker model and provider
+saves a receipt including cwd, output directory and the saved report hash. New
+deliveries always attach this receipt, including when no input snapshot was used.
+Use the explicit local [report integrity check](REPORT_INTEGRITY.md) to compare
+the two fixed artifact files; old receipts without a report hash remain uncheckable.
+Recommended ticket profile, configured worker model and provider
 attestation are distinct: generic workers declare model/effort; AgentRelay cannot
 prove which model a custom executable used. Reports still require independent review.
 

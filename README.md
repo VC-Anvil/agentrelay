@@ -6,7 +6,7 @@
 
 Turn goals into prioritized tickets, share durable context between agents, and keep delivery separate from acceptance. Humans use the web board; agents use the MCP server. Both operate on the same SQLite database.
 
-AgentRelay 0.10 combines a persistent ticket board, an MCP server and optional worker execution. Agents find work through filtered summaries and open current context with recent history; older audit events remain available by cursor. Register multiple local projects, inspect their priorities without starting workers, import complete plans without duplicates, capture exact review inputs and detect when those inputs change. Find a ticket's worker executions, recover a retained proposal after a conflict and review it against the current ticket without launching the worker again. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
+AgentRelay 0.11 combines a persistent ticket board, an MCP server and optional worker execution. Agents find work through filtered summaries and open current context with recent history; older audit events remain available by cursor. Register multiple local projects, inspect their priorities without starting workers, import complete plans without duplicates, capture exact review inputs and detect when those inputs change. Find a ticket's worker executions, recover a retained proposal after a conflict and review it against the current ticket without launching the worker again. Compare saved reports with their receipts before relying on their byte integrity. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
 
 ![AgentRelay local board with explicitly fictional demo data](docs/preview.jpg)
 
@@ -47,6 +47,7 @@ Windows quick launch: `powershell -File .\Start-AgentRelay.ps1 -Demo`. It prefer
 - Explicit worker launch/cancel, timeouts, bounded output, durable run history and conflict-safe results.
 - Single-run proposal retrieval through CLI `run-result` and MCP `get_run_result`, preserving output for review after conflicts without replaying stale changes. [Usage and limits](docs/RUN_RESULTS.md).
 - Execution discovery through CLI `runs` and MCP `list_runs`, filtered by ticket and status with cursor pagination and a retained-proposal indicator. [Run history](docs/RUN_HISTORY.md).
+- Explicit local `verify-report` checks distinguish intact, modified, missing and uncheckable reports; optional previously retained receipt hashes detect receipt replacement. [Integrity limits](docs/REPORT_INTEGRITY.md).
 - Codex CLI and Ollama text adapters, plus a provider-independent JSON worker protocol.
 - Bounded priority queue processing and online SQLite backup/restore.
 - Bounded input snapshots with SHA-256 verification, external artifact directories and a JSON action CLI for active-project pilots.

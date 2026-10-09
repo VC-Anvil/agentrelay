@@ -168,9 +168,10 @@ def persist_result(result, directory, packet, provider, snapshot_provenance=None
         receipt["report_sha256"] = hashlib.sha256((directory / "report.md").read_bytes()).hexdigest()
     receipt_path = directory / "receipt.json"
     receipt_path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
-    if snapshot_provenance is not None:
-        evidence.insert(0, {"kind": "receipt", "label": "Host receipt — input and report provenance",
-                            "uri": str(receipt_path)})
+    # Keep the host's report hash discoverable even without an input snapshot.
+    # This receipt records configuration and bytes, not provider attestation.
+    evidence.insert(0, {"kind": "receipt", "label": "Host receipt — declared configuration and report metadata",
+                        "uri": str(receipt_path)})
     return result
 
 

@@ -1,5 +1,6 @@
 """Real HTTP/process boundaries with explicit non-LLM fixture workers."""
 
+import hashlib
 import json
 from http.client import HTTPConnection
 from pathlib import Path
@@ -122,7 +123,12 @@ class AdapterBoundaryTests(unittest.TestCase):
         packet = {"worker": {"model": "fixture", "effort": "none"}, "context": {"ticket": {"id": "AR-1"}}}
         with tempfile.TemporaryDirectory() as temp:
             result = persist_result({"outcome": "submit", "summary": "Written result", "artifact_markdown": "# Exact report\ná", "evidence": []}, Path(temp), packet, "fixture")
-            self.assertEqual(Path(result["evidence"][0]["uri"]).read_text(encoding="utf-8"), "# Exact report\ná")
+            evidence = {item["kind"]: Path(item["uri"]) for item in result["evidence"]}
+            self.assertEqual(set(evidence), {"report", "receipt"})
+            self.assertEqual(evidence["report"].read_text(encoding="utf-8"), "# Exact report\ná")
+            receipt = json.loads(evidence["receipt"].read_text(encoding="utf-8"))
+            self.assertEqual(receipt["report_sha256"],
+                             hashlib.sha256(evidence["report"].read_bytes()).hexdigest())
             with self.assertRaises(ValueError):
                 persist_result({"outcome": "submit", "artifact_markdown": ""}, Path(temp), packet, "fixture")
 

@@ -64,6 +64,17 @@ When conclusions depend on a captured source and source drift is a real concern,
 
 Use `submit_ticket` with a concrete summary and evidence entries `{kind, label, uri}`. References are not proof: distinguish prepared, technically tested, reviewed and approved work. Never weaken criteria to pass a failed result.
 
+When reviewing a saved adapter report and byte integrity matters, an optional
+authorized local check is `agentrelay verify-report ARTIFACT_DIRECTORY`.
+Select the known directory explicitly; never follow a ticket URI or receipt path
+as permission to read another location. An independently retained earlier receipt
+hash can be supplied with `--receipt-sha256 HASH`. `unchanged` means equality with
+the recorded hash, not correct work or proven authorship. `modified`, `missing`
+and `uncheckable` require an honest evidence limitation; do not invent an old hash
+from today's file or automatically rerun work. The command returns JSON and exit
+0 only for `unchanged`, 2 for other states, and 1 for invalid selection. It is
+local CLI functionality, not an MCP filesystem tool.
+
 An independent reviewer uses `review_ticket` only after inspecting the evidence against every acceptance criterion. Record what was actually verified and any limits. The author's connection cannot approve its own work. The human UI is a separate reviewer identity, not an automatic verification engine.
 
 Do not finish a parent merely because children closed: verify the integrated outcome. Cancellation does not satisfy an explicit dependency. When blocked by missing user input, write a focused question and preserve progress; do not poll or manufacture an answer.
