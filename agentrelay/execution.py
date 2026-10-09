@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .run_results import MAX_RESULT_JSON
+from .run_results import MAX_RESULT_JSON, validate_result_depth
 from .store import DomainError, EFFORTS, Store
 
 if os.name == "nt":
@@ -432,9 +432,10 @@ class ExecutionManager:
 
     def _persist_result(self, run_id: str, result: dict) -> bool:
         """Capture validated protocol output before any ticket mutation, if still running."""
+        validate_result_depth(result)
         try:
             serialized = json.dumps(result, ensure_ascii=True, allow_nan=False, separators=(",", ":"))
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, RecursionError) as exc:
             raise DomainError("worker result is not strict JSON") from exc
         if len(serialized.encode("ascii")) > MAX_RESULT_JSON:
             raise DomainError("worker result exceeds storage limit")

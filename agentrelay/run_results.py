@@ -8,10 +8,31 @@ from .store import DomainError, Store
 PUBLIC_RUN_FIELDS = ("id", "ticket_id", "worker_id", "status", "started_at",
                      "finished_at", "summary", "error", "model", "effort")
 MAX_RESULT_JSON = 4_194_304  # ASCII escaping can expand a valid 1 MiB UTF-8 worker output.
+MAX_RESULT_DEPTH = 64  # Root object counts as one container.
 
 
 def _invalid_constant(value):
     raise ValueError(f"non-finite JSON constant {value}")
+
+
+def validate_result_depth(value):
+    """Reject JSON container nesting that cannot be safely returned by clients."""
+    if not isinstance(value, (dict, list)):
+        return
+    children = value.values() if isinstance(value, dict) else value
+    pending = [(iter(children), 1)]
+    while pending:
+        siblings, depth = pending[-1]
+        if depth > MAX_RESULT_DEPTH:
+            raise DomainError("stored worker result is invalid", 500)
+        try:
+            child = next(siblings)
+        except StopIteration:
+            pending.pop()
+            continue
+        if isinstance(child, (dict, list)):
+            grandchildren = child.values() if isinstance(child, dict) else child
+            pending.append((iter(grandchildren), depth + 1))
 
 
 def get_run_result(store: Store, run_id: str) -> dict:
@@ -44,6 +65,7 @@ def get_run_result(store: Store, run_id: str) -> dict:
                 raise DomainError("stored worker result is invalid", 500) from exc
             if not isinstance(result, dict):
                 raise DomainError("stored worker result is not an object", 500)
+            validate_result_depth(result)
         else:
             result = None
         response = {

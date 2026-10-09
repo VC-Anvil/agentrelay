@@ -3,7 +3,31 @@
 Date: 2026-10-10 (Europe/Madrid). Windows, Python 3.12.14, MCP SDK 1.30.0.
 Previous release: [execution discovery](VALIDATION_0_10.md).
 
-## Patch 0.11.1 — excessive depth in retained results
+## Patch 0.11.2 — portable stored-result depth limit
+
+The first patch passed locally but failed on Linux Python 3.12.15 in CI: that
+decoder accepted 5,000 levels, after which the CLI's JSON encoder exceeded its
+own recursion limit. The failed run and original artifacts were preserved, and
+the development ticket was reopened. Raising the fixture's depth would only
+hide the difference between runtimes.
+
+The reader now checks a fixed maximum of 64 object/array containers, with the
+root counting as one. An iterative traversal keeps its auxiliary stack bounded
+by nesting depth. The execution manager applies the same check before retaining
+new normalized proposals or applying them to a ticket. Stored data beyond the
+limit is rejected without rewriting it; strings containing brackets remain text.
+
+Regressions preserve the original deep fixture and additionally exercise exactly
+64 levels, 65 levels, long bracket-containing text, an unaffected neighboring run,
+CLI diagnostics and a real local fixture worker rejected before proposal capture
+or submission. These fixtures do not call a model provider.
+
+The full local rerun passed **146 tests with three Windows symlink skips (149
+total)** in 47.057 seconds. Independent service/integration review found no
+remaining defect in the scoped change. CI must verify this exact patch separately;
+the earlier failed 0.11.1 run is not counted as success.
+
+## Patch 0.11.1 — initial decoder exception handling
 
 An isolated SQLite fixture containing 10,013 bytes of deeply nested JSON caused
 `get_run_result` to raise an unhandled `RecursionError`; its CLI printed a
@@ -18,7 +42,8 @@ root review confirmed the original reproduction now fails cleanly and all its
 ticket, profile, event, dependency and run rows remain identical. The full suite
 passed **145 tests with three Windows symlink skips (148 total)** in 46.323 seconds.
 The earlier 0.11.0 commit passed all four Windows/Linux Python 3.11/3.12 CI jobs;
-the patch requires its own CI result. No pilot or game data was modified.
+the patch's subsequent Linux failure is recorded above. No pilot or game data
+was modified. The local result alone did not establish cross-platform success.
 
 ## Evidence and change
 

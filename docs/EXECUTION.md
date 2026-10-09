@@ -99,6 +99,9 @@ an already-authorized read-only connection only when needed, or request missing
 context. No events are removed from the database. See [history semantics](HISTORY.md).
 Profile settings are recommendations, not proof of model availability. Stdout must contain exactly one
 JSON result (up to 1 MiB). Diagnostic output belongs on stderr, also bounded.
+Normalized proposals may contain at most 64 nested object/array containers,
+counting the root object as one. Excessive depth is rejected before capture or
+ticket application so retained output remains readable across supported runtimes.
 
 ```json
 {"outcome":"submit","summary":"What changed and what was checked","evidence":[{"kind":"file","label":"Result","uri":"/absolute/result.md"}]}

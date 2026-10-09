@@ -36,6 +36,11 @@ else:
         result = {"outcome": "submit", "summary": "  Salida revisable en español  ",
                   "evidence": [{"kind": "file", "label": label, "uri": "local://fixture"}],
                   "title": None, "description": None, "profile_id": None, "children": None}
+        if mode == "deep":
+            nested = 0
+            for _ in range(65):
+                nested = [nested]
+            result["children"] = nested
     print(json.dumps(result, ensure_ascii=False))
 '''
 
@@ -179,6 +184,19 @@ class RunResultTests(unittest.TestCase):
         oversize_id = oversize_manager.start(second["id"], "fixture", 1)["id"]
         self.assertEqual(self.finished(oversize_manager, oversize_id)["status"], "failed")
         self.assertIsNone(get_run_result(self.store, oversize_id)["result"])
+
+    def test_excessive_depth_is_rejected_before_capture_or_submission(self):
+        ticket = self.ticket()
+        manager = self.manager("deep")
+        run_id = manager.start(ticket["id"], "fixture", 1)["id"]
+        finished = self.finished(manager, run_id)
+        self.assertEqual(finished["status"], "failed")
+        self.assertIn("invalid JSON", finished["error"])
+        self.assertIsNone(get_run_result(self.store, run_id)["result"])
+        context = self.store.context(ticket["id"])
+        self.assertEqual(context["ticket"]["status"], "blocked")
+        self.assertEqual(context["ticket"]["evidence"], [])
+        self.assertFalse(any(event["action"] == "submit_ticket" for event in context["events"]))
 
     def test_cancel_after_capture_does_not_apply_proposal(self):
         ticket = self.ticket()

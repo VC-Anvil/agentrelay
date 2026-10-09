@@ -51,4 +51,11 @@ Only results produced after proposal retention was added can have a stored objec
 
 Existing local worker logs can still be inspected manually under their established permissions, but AgentRelay does not reconstruct old protocol output retroactively. Worker stdout remains capped at 1 MiB; normalized strict JSON has a separate 4 MiB ASCII storage cap.
 
+Results are limited to 64 nested object/array containers, counting the root object
+as one. The same limit applies before capturing new proposals and when reading
+stored ones, independently of the Python decoder's platform-specific capacity.
+An unreadable, oversized or excessively deep stored result produces a controlled
+error rather than a replacement value. Its original bytes remain in SQLite;
+other valid runs can still be queried. Brackets inside strings are ordinary text.
+
 SQLite backups include retained proposals because they copy the database. The existing bulk JSON export remains unchanged and does not add run proposals. This query does not construct an `ExecutionManager`, recover runs, read worker log files, launch a worker or mutate ticket state.
