@@ -46,6 +46,12 @@ If MCP is unavailable and the authorized CLI fallback is used, pass an exact `{a
 If a configured worker already produced output but its run conflicted, use
 `get_run_result(run_id)` on the same project to inspect the retained proposal.
 The authorized local CLI equivalent is `agentrelay run-result --db DATABASE --run RUN_ID`.
+If only the ticket ID is known, first call `list_runs(ticket_id, status?, limit=20)`.
+It returns bounded execution summaries and `has_result`, without proposal bodies.
+Use `next_before_id` as `before_id` only when an older execution is relevant;
+preserve the selected project and ticket filter. The CLI equivalent is
+`agentrelay runs --db DATABASE --ticket TICKET_ID --limit 20` with optional
+`--status` and `--before-id`. Proposal presence and run status do not imply acceptance.
 Compare the proposal and its claim revision with fresh full ticket context before
 deciding whether any output is still relevant. Reading it does not apply changes,
 rerun the worker, verify its evidence or approve delivery. `result: null` means no

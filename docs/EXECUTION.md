@@ -124,6 +124,9 @@ logs, worker configs, receipts and provider authentication outside version contr
 New runs retain their parsed protocol proposal in SQLite before attempting ticket
 application. Use the explicit CLI `run-result --db DATABASE --run RUN_ID` or MCP
 `get_run_result` to compare a conflicted proposal with current ticket context.
+Discover that ID through `runs --db DATABASE --ticket TICKET_ID --status conflict`
+or MCP `list_runs(ticket_id, status="conflict")`; the bounded summaries include
+`has_result` so the caller can select a proposal without fetching every body.
 This does not reapply output or accept evidence. Older runs can have no retained
 proposal even when local diagnostic logs contain output. See [run results](RUN_RESULTS.md)
 for the response contract and cancellation/crash limits.

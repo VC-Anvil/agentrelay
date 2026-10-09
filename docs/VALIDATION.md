@@ -1,6 +1,7 @@
 # AgentRelay validation
 
-The current 0.9 work is covered by [retained worker proposal validation](VALIDATION_0_9.md).
+The current 0.10 work is covered by [execution discovery validation](VALIDATION_0_10.md).
+The preceding [retained worker proposal validation](VALIDATION_0_9.md) is archived.
 Earlier [multi-project overview validation](VALIDATION_0_8.md) remains available;
 its pending ticket acceptance has not been changed. No pending acceptance or
 CI job is counted as a successful review.

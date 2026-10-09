@@ -29,7 +29,7 @@ def main():
     overview = sub.add_parser("overview", help="Read a bounded summary of configured projects")
     overview.add_argument("--workspaces", type=Path, required=True, help="Explicit trusted project registry")
     overview.add_argument("--limit", type=int, default=5, help="Tickets per category in each project (1..20)")
-    for name in ("serve", "mcp", "export", "run", "run-result", "backup", "action", "context", "history"):
+    for name in ("serve", "mcp", "export", "run", "runs", "run-result", "backup", "action", "context", "history"):
         command = sub.add_parser(name)
         command.add_argument("--db", type=Path, help="SQLite database shared by web and MCP")
         if name == "action":
@@ -47,6 +47,11 @@ def main():
         if name == "run-result":
             command.add_argument("--run", required=True, dest="run_id",
                                  help="Exact execution run ID")
+        if name == "runs":
+            command.add_argument("--ticket", dest="ticket_id", help="Optional exact ticket ID")
+            command.add_argument("--status", help="Optional execution status")
+            command.add_argument("--limit", type=int, default=20, help="Runs per page (1..100)")
+            command.add_argument("--before-id", help="Exclusive run ID cursor from the previous page")
         if name == "backup":
             command.add_argument("--output", type=Path, required=True, help="New SQLite file; refuses overwrite")
         if name == "serve":
@@ -120,7 +125,7 @@ def main():
     demo = getattr(args, "demo", False)
     database = args.db or Path.cwd() / ".agentrelay" / ("demo.sqlite" if demo else "workspace.sqlite")
     database = database.expanduser().resolve()
-    if args.command in {"context", "history", "export", "run-result", "backup"}:
+    if args.command in {"context", "history", "export", "runs", "run-result", "backup"}:
         from .workspaces import require_agentrelay_database
         try:
             database = require_agentrelay_database(database)
@@ -131,13 +136,17 @@ def main():
     store = Store(database)
     if demo:
         store.seed_demo()
-    if args.command in {"action", "context", "history", "run-result"}:
+    if args.command in {"action", "context", "history", "runs", "run-result"}:
         try:
             if args.command == "action":
                 result = store.action(request["action"], request["data"], args.actor)
             elif args.command == "run-result":
                 from .run_results import get_run_result
                 result = get_run_result(store, args.run_id)
+            elif args.command == "runs":
+                from .run_history import list_runs
+                result = list_runs(store, ticket_id=args.ticket_id, status=args.status,
+                                   limit=args.limit, before_id=args.before_id)
             elif args.command == "history":
                 result = store.ticket_events(args.ticket, limit=args.limit, before_id=args.before_id)
             else:
