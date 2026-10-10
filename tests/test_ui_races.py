@@ -25,7 +25,7 @@ class UiRaceNodeTests(unittest.TestCase):
         )
         details = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
         self.assertEqual(result.returncode, 0, details or "El arnés Node terminó sin diagnóstico")
-        self.assertIn("32 pruebas de carreras UI superadas", result.stdout)
+        self.assertIn("43 pruebas de carreras UI superadas", result.stdout)
 
 
 if __name__ == "__main__":

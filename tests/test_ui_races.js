@@ -367,10 +367,12 @@ function loadHarness() {
   const instrumented = source.replace(BOOTSTRAP, TEST_EXPORT);
   const { document, byId } = createDocument();
   const transport = controlledFetch();
+  const confirmations = [];
+  let confirmResponse = true;
   const sandbox = {
     console,
     document,
-    window: { confirm: () => true },
+    window: { confirm: (message) => { confirmations.push(String(message)); return confirmResponse; } },
     localStorage: createStorage(),
     sessionStorage: createStorage(),
     fetch: transport.fetch,
@@ -400,7 +402,7 @@ function loadHarness() {
   hooks.app.workspaceEpoch = 1;
   hooks.app.legacyWorkspace = false;
   hooks.app.state = state("a", "initial");
-  return { ...hooks, transport, byId };
+  return { ...hooks, transport, byId, confirmations, setConfirmResponse(value) { confirmResponse = Boolean(value); } };
 }
 
 async function oldGetCannotOverwriteMutation() {
@@ -1318,6 +1320,277 @@ async function previouslyDisabledExecutionControlsStayDisabledAfterError() {
   assert.equal(worker.disabled, true, "se habilitó worker previamente bloqueado");
 }
 
+function setControl(form, name, value, eventName = "input") {
+  const control = findElement(form, (element) => element.name === name);
+  assert.ok(control, `No se encontró el control ${name}`);
+  control.value = value;
+  control.dispatch(eventName);
+  return control;
+}
+
+function renderedHarness(status = "in_progress") {
+  const h = loadHarness();
+  const ctx = contextForTicket("T-1", "Original", status);
+  h.app.selectedId = "T-1";
+  h.app.context = ctx;
+  h.app.state = state("a", "initial", [ctx.ticket]);
+  h.renderDrawer();
+  return { h, ctx, body: h.byId("drawer-body") };
+}
+
+async function cancelCrossFormDiscardKeepsEveryDraft() {
+  const { h, body } = renderedHarness();
+  const definition = findElement(body, (element) => element.dataset.form === "edit-ticket");
+  const comment = actionForm(body, "comment");
+  const title = setControl(definition, "title", "Borrador V2");
+  const commentBody = setControl(comment, "body", "Comentario pendiente");
+  comment.formValues = new Map([["body", commentBody.value]]);
+  h.setConfirmResponse(false);
+  const cancelled = comment.dispatch("submit", { preventDefault() {} });
+  assert.equal(h.transport.calls.length, 0);
+  assert.equal(title.value, "Borrador V2");
+  assert.equal(commentBody.value, "Comentario pendiente");
+  assert.equal(h.app.drawerDirty, true);
+  assert.match(h.confirmations[0], /Definición/);
+  assert.match(h.confirmations[0], /descartará esos borradores/);
+  await cancelled;
+}
+
+async function consentDiscardsOtherDraftOnlyAfterFreshContext() {
+  const { h, ctx, body } = renderedHarness();
+  const definition = findElement(body, (element) => element.dataset.form === "edit-ticket");
+  const comment = actionForm(body, "comment");
+  const oldTitle = setControl(definition, "title", "Borrador V2");
+  const commentBody = setControl(comment, "body", "Comentario enviado");
+  comment.formValues = new Map([["body", commentBody.value]]);
+  const pending = comment.dispatch("submit", { preventDefault() {} });
+  assert.equal(JSON.parse(h.transport.calls[0].options.body).action, "add_comment");
+  const saved = { ...ctx.ticket, revision: 2 };
+  h.transport.respond(0, { result: saved, state: state("a", "saved", [saved]) });
+  await waitForCalls(h.transport, 2);
+  assert.equal(oldTitle.value, "Borrador V2", "el POST por sí solo descartó el borrador ajeno");
+  const fresh = contextForTicket("T-1", "Original", "in_progress"); fresh.ticket.revision = 2;
+  h.transport.respond(1, fresh);
+  await pending;
+  const newTitle = findElement(h.byId("drawer-body"), (element) => element.name === "title");
+  assert.notEqual(newTitle, oldTitle);
+  assert.equal(newTitle.value, "Original");
+  assert.equal(h.app.drawerDirty, false);
+}
+
+async function ownSaveAndRevertedDraftDoNotPrompt() {
+  const { h, ctx, body } = renderedHarness();
+  const definition = findElement(body, (element) => element.dataset.form === "edit-ticket");
+  const title = setControl(definition, "title", "Temporal");
+  title.value = "Original"; await title.dispatch("input");
+  assert.equal(h.app.drawerDirty, false);
+  title.value = "Guardado"; await title.dispatch("input");
+  definition.formValues = definitionValues("Guardado");
+  const pending = definition.dispatch("submit", { preventDefault() {} });
+  assert.equal(h.confirmations.length, 0);
+  const saved = { ...ctx.ticket, title: "Guardado", revision: 2 };
+  h.transport.respond(0, { result: saved, state: state("a", "saved", [saved]) });
+  await waitForCalls(h.transport, 2);
+  const fresh = contextForTicket("T-1", "Guardado", "in_progress"); fresh.ticket.revision = 2;
+  h.transport.respond(1, fresh);
+  await pending;
+}
+
+async function knownRejectionKeepsConsentedSemanticReview() {
+  const h = loadHarness();
+  const ctx = reviewContext("a");
+  h.app.selectedId = "T-1"; h.app.context = ctx; h.app.state = state("a", "initial", [ctx.ticket]);
+  h.app.reviewDraft = { workspaceId: "a", workspaceEpoch: 1, drawerEpoch: 0, ticketId: "T-1", verification: "V", acceptedCriteria: ["Criterio A"], needsConfirmation: true, refreshRequired: false };
+  h.renderDrawer();
+  const comment = actionForm(h.byId("drawer-body"), "comment");
+  const bodyControl = setControl(comment, "body", "Comentario");
+  comment.formValues = new Map([["body", bodyControl.value]]);
+  const pending = comment.dispatch("submit", { preventDefault() {} });
+  assert.match(h.confirmations[0], /Revisión pendiente/);
+  h.transport.respond(0, { error: "rechazado" }, 400);
+  await pending;
+  assert.equal(bodyControl.value, "Comentario");
+  assert.equal(h.app.reviewDraft.needsConfirmation, true);
+  assert.equal(h.app.drawerDirty, true);
+}
+
+async function completionConflictUsesPriorDiscardConsent() {
+  const h = loadHarness();
+  const ctx = reviewContext("a");
+  h.app.selectedId = "T-1"; h.app.context = ctx; h.app.state = state("a", "initial", [ctx.ticket]);
+  h.renderDrawer();
+  const body = h.byId("drawer-body");
+  setControl(findElement(body, (element) => element.dataset.form === "edit-ticket"), "title", "Definición sin guardar");
+  const complete = actionForm(body, "complete");
+  complete.formValues = new Map([["verification", "Verificado"], ["accepted_criteria", ["Criterio A"]]]);
+  const pending = complete.dispatch("submit", { preventDefault() {} });
+  assert.match(h.confirmations[0], /conflicto al completar/);
+  h.transport.respond(0, { error: "acceptance context changed; reread ticket context before completing" }, 409);
+  await waitForCalls(h.transport, 2);
+  const fresh = reviewContext("a", NEW_TOKEN); fresh.ticket.revision = 2;
+  h.transport.respond(1, fresh);
+  await pending;
+  assert.equal(h.app.reviewDraft.needsConfirmation, true);
+  assert.equal(findElement(h.byId("drawer-body"), (element) => element.name === "title").value, "Revisión");
+}
+
+async function startRunWarnsThatPersistedDefinitionIsUsed() {
+  const { h, ctx, body } = renderedHarness("queued");
+  ctx.ticket.ready = true;
+  h.app.state.tickets[0].ready = true;
+  h.app.state.execution = { enabled: true, workers: [{ id: "w", name: "Worker", model: "fixture", effort: "low", profile_ids: [] }], runs: [] };
+  h.renderDrawer();
+  const currentBody = h.byId("drawer-body");
+  setControl(findElement(currentBody, (element) => element.dataset.form === "edit-ticket"), "description", "Sólo en pantalla");
+  const execution = findElement(currentBody, (element) => element.className.includes("execution-form"));
+  h.setConfirmResponse(false);
+  const cancelled = execution.dispatch("submit", { preventDefault() {} });
+  assert.equal(h.transport.calls.length, 0);
+  assert.equal(findElement(currentBody, (element) => element.name === "description").value, "Sólo en pantalla");
+  assert.match(h.confirmations[0], /definición ya guardada/);
+  await cancelled;
+}
+
+async function malformedContextCannotDiscardConsentedDraft() {
+  const h = loadHarness();
+  const ctx = reviewContext("a");
+  h.app.selectedId = "T-1"; h.app.context = ctx; h.app.state = state("a", "initial", [ctx.ticket]);
+  h.app.reviewDraft = { workspaceId: "a", workspaceEpoch: 1, drawerEpoch: 0, ticketId: "T-1", verification: "V", acceptedCriteria: ["Criterio A"], needsConfirmation: true, refreshRequired: false };
+  h.renderDrawer();
+  const body = h.byId("drawer-body");
+  const definition = findElement(body, (element) => element.dataset.form === "edit-ticket");
+  const comment = actionForm(body, "comment");
+  const title = setControl(definition, "title", "Borrador conservado");
+  const commentBody = setControl(comment, "body", "Comentario");
+  comment.formValues = new Map([["body", commentBody.value]]);
+  const pending = comment.dispatch("submit", { preventDefault() {} });
+  const saved = { ...ctx.ticket, revision: 2 };
+  h.transport.respond(0, { result: saved, state: state("a", "saved", [saved]) });
+  await waitForCalls(h.transport, 2);
+  h.transport.respond(1, { workspace: { id: "a" }, ticket: { id: "OTRA" } });
+  await pending;
+  assert.equal(title.value, "Borrador conservado");
+  assert.ok(h.app.reviewDraft, "el contexto malformado borró la revisión semántica");
+  assert.equal(h.app.drawerDirty, true);
+  assert.ok(h.app.drawerMutation, "el 200 malformado no exigió reintentar la lectura");
+}
+
+async function failedCompletionRefreshKeepsOtherDraftUntilRetrySucceeds() {
+  const h = loadHarness();
+  const ctx = reviewContext("a");
+  h.app.selectedId = "T-1"; h.app.context = ctx; h.app.state = state("a", "initial", [ctx.ticket]);
+  h.renderDrawer();
+  const body = h.byId("drawer-body");
+  const definition = findElement(body, (element) => element.dataset.form === "edit-ticket");
+  const title = setControl(definition, "title", "Definición V2");
+  const complete = actionForm(body, "complete");
+  complete.formValues = new Map([["verification", "Verificado"], ["accepted_criteria", ["Criterio A"]]]);
+  const pending = complete.dispatch("submit", { preventDefault() {} });
+  h.transport.respond(0, { error: "acceptance context changed; reread ticket context before completing" }, 409);
+  await waitForCalls(h.transport, 2);
+  h.transport.calls[1].reject(new Error("sin conexión"));
+  await pending;
+  assert.equal(findElement(body, (element) => element.name === "title"), title);
+  assert.equal(title.value, "Definición V2");
+  assert.equal(h.app.reviewDraft.refreshRequired, true);
+  const retryButton = findElement(body, (element) => element.textContent === "Reintentar carga de contexto");
+  assert.ok(retryButton);
+  const retry = retryButton.dispatch("click");
+  await waitForCalls(h.transport, 3);
+  assert.equal(title.disabled, true, "otro borrador quedó editable durante el GET de retry");
+  assert.equal(h.transport.calls.filter((call) => call.url === "/api/actions").length, 1);
+  const fresh = reviewContext("a", NEW_TOKEN); fresh.ticket.revision = 2;
+  h.transport.respond(2, fresh);
+  await retry;
+  assert.notEqual(findElement(body, (element) => element.name === "title"), title);
+  assert.equal(h.app.reviewDraft.needsConfirmation, true);
+  assert.match(treeText(body), /He revisado el contexto actualizado/);
+}
+
+async function definitionSaveWithCommentDraftRequiresConsent() {
+  const { h, ctx, body } = renderedHarness();
+  const definition = findElement(body, (element) => element.dataset.form === "edit-ticket");
+  const comment = actionForm(body, "comment");
+  setControl(definition, "title", "Definición guardada");
+  definition.formValues = definitionValues("Definición guardada");
+  const commentBody = setControl(comment, "body", "Comentario no enviado");
+  comment.formValues = new Map([["body", commentBody.value]]);
+  h.setConfirmResponse(false);
+  const cancelled = definition.dispatch("submit", { preventDefault() {} });
+  assert.equal(h.transport.calls.length, 0);
+  assert.equal(commentBody.value, "Comentario no enviado");
+  await cancelled;
+  h.setConfirmResponse(true);
+  const pending = definition.dispatch("submit", { preventDefault() {} });
+  const envelope = JSON.parse(h.transport.calls[0].options.body);
+  assert.equal(envelope.action, "update_ticket");
+  assert.equal(envelope.data.title, "Definición guardada");
+  assert.equal(Object.prototype.hasOwnProperty.call(envelope.data, "body"), false);
+  const saved = { ...ctx.ticket, title: "Definición guardada", revision: 2 };
+  h.transport.respond(0, { result: saved, state: state("a", "saved", [saved]) });
+  await waitForCalls(h.transport, 2);
+  const fresh = contextForTicket("T-1", "Definición guardada", "in_progress"); fresh.ticket.revision = 2;
+  h.transport.respond(1, fresh);
+  await pending;
+  assert.equal(h.transport.calls.filter((call) => call.url === "/api/actions").length, 1);
+}
+
+async function checkboxDraftPromptsButDisabledControlsDoNot() {
+  const h = loadHarness();
+  const ctx = reviewContext("a");
+  h.app.selectedId = "T-1"; h.app.context = ctx; h.app.state = state("a", "initial", [ctx.ticket]);
+  h.renderDrawer();
+  const body = h.byId("drawer-body");
+  const complete = actionForm(body, "complete");
+  const criterion = findElement(complete, (element) => element.name === "accepted_criteria");
+  criterion.checked = true; await criterion.dispatch("change");
+  const comment = actionForm(body, "comment");
+  const commentBody = setControl(comment, "body", "Comentario");
+  comment.formValues = new Map([["body", commentBody.value]]);
+  h.setConfirmResponse(false);
+  const cancelled = comment.dispatch("submit", { preventDefault() {} });
+  assert.match(h.confirmations[0], /Revisar y cerrar/);
+  assert.equal(h.transport.calls.length, 0);
+  assert.equal(criterion.checked, true);
+  await cancelled;
+
+  const done = contextForTicket("T-1", "Cerrada", "done");
+  h.app.context = done; h.app.state = state("a", "done", [done.ticket]); h.renderDrawer();
+  const doneBody = h.byId("drawer-body");
+  const disabledTitle = findElement(doneBody, (element) => element.name === "title");
+  assert.equal(disabledTitle.disabled, true);
+  disabledTitle.value = "Cambio programático ignorado";
+  const doneComment = actionForm(doneBody, "comment");
+  const doneCommentBody = setControl(doneComment, "body", "Comentario válido");
+  doneComment.formValues = new Map([["body", doneCommentBody.value]]);
+  h.setConfirmResponse(true);
+  const pending = doneComment.dispatch("submit", { preventDefault() {} });
+  assert.equal(h.confirmations.length, 1, "un control inicialmente deshabilitado produjo otro aviso");
+  h.transport.respond(0, { error: "rechazado" }, 400);
+  await pending;
+}
+
+async function semanticReviewDraftClearsOnlyAfterSuccessfulContext() {
+  const h = loadHarness();
+  const ctx = reviewContext("a");
+  h.app.selectedId = "T-1"; h.app.context = ctx; h.app.state = state("a", "initial", [ctx.ticket]);
+  h.app.reviewDraft = { workspaceId: "a", workspaceEpoch: 1, drawerEpoch: 0, ticketId: "T-1", verification: "V", acceptedCriteria: ["Criterio A"], needsConfirmation: true, refreshRequired: false };
+  h.renderDrawer();
+  const comment = actionForm(h.byId("drawer-body"), "comment");
+  const commentBody = setControl(comment, "body", "Comentario");
+  comment.formValues = new Map([["body", commentBody.value]]);
+  const pending = comment.dispatch("submit", { preventDefault() {} });
+  const saved = { ...ctx.ticket, revision: 2 };
+  h.transport.respond(0, { result: saved, state: state("a", "saved", [saved]) });
+  await waitForCalls(h.transport, 2);
+  assert.ok(h.app.reviewDraft, "el POST borró el borrador de revisión antes del GET");
+  const fresh = reviewContext("a", NEW_TOKEN); fresh.ticket.revision = 2;
+  h.transport.respond(1, fresh);
+  await pending;
+  assert.equal(h.app.reviewDraft, null);
+  assert.equal(h.app.drawerDirty, false);
+}
+
 const tests = [
   ["GET antiguo no sobrescribe una mutación", oldGetCannotOverwriteMutation],
   ["cerrar y reabrir descarta contexto antiguo", closeAndReopenRejectsOldContext],
@@ -1350,7 +1623,18 @@ const tests = [
   ["un error 500 tras el POST también queda incierto", serverErrorAfterPostIsAlsoUncertain],
   ["mutación pendiente no bloquea nueva instancia de drawer", pendingMutationDoesNotLockNewDrawerInstance],
   ["mutación pendiente no bloquea el mismo ticket reabierto", pendingMutationDoesNotLockReopenedSameTicket],
-  ["error conserva controles de ejecución previamente bloqueados", previouslyDisabledExecutionControlsStayDisabledAfterError]
+  ["error conserva controles de ejecución previamente bloqueados", previouslyDisabledExecutionControlsStayDisabledAfterError],
+  ["cancelar conserva borradores cruzados", cancelCrossFormDiscardKeepsEveryDraft],
+  ["el descarte consentido espera contexto nuevo", consentDiscardsOtherDraftOnlyAfterFreshContext],
+  ["guardar el propio formulario y revertir no preguntan", ownSaveAndRevertedDraftDoNotPrompt],
+  ["un rechazo conocido conserva la revisión semántica", knownRejectionKeepsConsentedSemanticReview],
+  ["el 409 de aceptación usa consentimiento previo", completionConflictUsesPriorDiscardConsent],
+  ["start_run advierte sobre definición persistida", startRunWarnsThatPersistedDefinitionIsUsed],
+  ["un contexto malformado no descarta borradores", malformedContextCannotDiscardConsentedDraft],
+  ["el 409 con GET fallido conserva otro borrador hasta retry", failedCompletionRefreshKeepsOtherDraftUntilRetrySucceeds],
+  ["guardar definición con comentario exige consentimiento", definitionSaveWithCommentDraftRequiresConsent],
+  ["checkbox cuenta y controles deshabilitados no", checkboxDraftPromptsButDisabledControlsDoNot],
+  ["la revisión semántica sólo se descarta tras GET válido", semanticReviewDraftClearsOnlyAfterSuccessfulContext]
 ];
 
 (async () => {

@@ -73,6 +73,8 @@
     drawerEpoch: 0,
     drawerDirty: false,
     drawerMutation: null,
+    drawerForms: new Map(),
+    drawerFormsScope: null,
     uncertainDrawerWarning: null,
     dialogDirty: false,
     loadingEpoch: null,
@@ -105,6 +107,8 @@
   const drawerMutationControls = () => $$("input, textarea, select, button", $("#drawer-body"));
   const clearDrawerMutationForNavigation = () => {
     app.drawerMutation = null;
+    app.drawerForms = new Map();
+    app.drawerFormsScope = null;
     app.uncertainDrawerWarning = null;
     $("#ticket-drawer").removeAttribute("aria-busy");
   };
@@ -115,7 +119,72 @@
     warning.dataset.uncertainMutation = "true";
     return warning;
   };
-  const beginDrawerMutation = (scope) => {
+  const drawerFormValue = (control) => ({
+    name: control.name,
+    type: String(control.type || control.tagName).toLowerCase(),
+    value: String(control.value ?? ""),
+    checked: ["checkbox", "radio"].includes(String(control.type || "").toLowerCase()) ? Boolean(control.checked) : null
+  });
+  const drawerFormControls = (form) => $$("input, textarea, select", form).filter((control) => control.name && !control.disabled);
+  const drawerFormChanged = (record) => record.controls.some((control, index) => {
+    const before = record.baseline[index];
+    const current = drawerFormValue(control);
+    return !before || before.name !== current.name || before.type !== current.type || before.value !== current.value || before.checked !== current.checked;
+  });
+  const semanticReviewDraftPending = () => {
+    const draft = reviewDraftFor(currentTicket());
+    return Boolean(draft?.needsConfirmation || draft?.refreshRequired);
+  };
+  const drawerFormsAreCurrent = () => isCurrentDrawer(app.drawerFormsScope);
+  const dirtyDrawerForms = (excludeKey = null) => {
+    if (!drawerFormsAreCurrent()) return [];
+    const dirty = [...app.drawerForms.values()].filter((record) => record.key !== excludeKey && drawerFormChanged(record));
+    if (excludeKey !== "action:complete" && semanticReviewDraftPending()) {
+      dirty.push({ key: "review-draft", label: "Revisión pendiente", semantic: true });
+    }
+    return dirty;
+  };
+  const syncDrawerDirty = () => {
+    const formsCurrent = drawerFormsAreCurrent();
+    const formsDirty = formsCurrent && [...app.drawerForms.values()].some(drawerFormChanged);
+    app.drawerDirty = Boolean(app.drawerMutation || formsDirty || semanticReviewDraftPending() || (!formsCurrent && app.drawerDirty));
+    return app.drawerDirty;
+  };
+  const registerDrawerForms = (ticket) => {
+    const scope = captureDrawer(ticket.id);
+    const records = new Map();
+    $$("form", $("#drawer-body")).forEach((form) => {
+      const key = form.dataset.draftKey;
+      if (!key) return;
+      const controls = drawerFormControls(form);
+      const record = { key, label: form.dataset.draftLabel || key, form, controls, baseline: controls.map(drawerFormValue) };
+      records.set(key, record);
+      controls.forEach((control) => {
+        control.addEventListener("input", syncDrawerDirty);
+        control.addEventListener("change", syncDrawerDirty);
+      });
+    });
+    app.drawerForms = records;
+    app.drawerFormsScope = scope;
+    syncDrawerDirty();
+  };
+  const confirmOtherDrawerDrafts = (form, scope, { startRun = false } = {}) => {
+    if (!isCurrentDrawer(scope)) return null;
+    if (!drawerFormsAreCurrent()) return { discardReviewDraft: false };
+    if (!$("#drawer-body").contains(form)) return null;
+    syncDrawerDirty();
+    const otherDirty = dirtyDrawerForms(form.dataset.draftKey || null);
+    if (!otherDirty.length) return { discardReviewDraft: false };
+    const labels = [...new Set(otherDirty.map((record) => record.label))];
+    let message = `Hay cambios sin guardar en ${labels.join(", ")}. La recarga posterior a esta acción descartará esos borradores.`;
+    if (form.dataset.draftKey === "action:complete") message += " Un conflicto al completar también puede forzar esa recarga.";
+    message += " ¿Descartarlos y continuar?";
+    if (startRun) message += " El ejecutor usará la definición ya guardada, no los cambios que están sólo en el formulario.";
+    if (!window.confirm(message)) return null;
+    if (!isCurrentDrawer(scope) || !$("#drawer-body").contains(form)) return null;
+    return { discardReviewDraft: otherDirty.some((record) => record.key === "review-draft") };
+  };
+  const beginDrawerMutation = (scope, consent = {}) => {
     if (!isCurrentDrawer(scope) || app.mutationCount || app.drawerMutation) {
       toast("Espera a que termine la operación en curso.", true);
       return null;
@@ -132,7 +201,7 @@
     notice.setAttribute("aria-live", "polite");
     $("#drawer-body").append(notice);
     $("#ticket-drawer").setAttribute("aria-busy", "true");
-    const guard = { scope, controls, notice, outcome: "pending", contextLoaded: null };
+    const guard = { scope, controls, notice, outcome: "pending", contextLoaded: null, discardReviewDraft: Boolean(consent.discardReviewDraft) };
     app.drawerMutation = guard;
     app.drawerDirty = true;
     return guard;
@@ -149,6 +218,7 @@
         control.readOnly = readOnly;
       });
     }
+    syncDrawerDirty();
   };
   const textControlCanBeReadOnly = (control) => {
     if (control.tagName === "TEXTAREA") return true;
@@ -159,7 +229,7 @@
     const retry = guard.notice.querySelector("button");
     if (retry) retry.disabled = true;
     $("#ticket-drawer").setAttribute("aria-busy", "true");
-    const refreshed = await loadContext(guard.scope.ticketId, { forceRender: true, quietError: true });
+    const refreshed = await loadContext(guard.scope.ticketId, { forceRender: true, quietError: true, discardReviewDraft: guard.discardReviewDraft });
     if (!isCurrentDrawer(guard.scope) || app.drawerMutation !== guard) return false;
     if (!refreshed) {
       $("#ticket-drawer").removeAttribute("aria-busy");
@@ -204,7 +274,6 @@
       return false;
     }
     releaseDrawerMutation(guard);
-    app.drawerDirty = false;
     return true;
   };
   const finishRejectedDrawerMutation = (guard) => {
@@ -218,7 +287,7 @@
       return;
     }
     releaseDrawerMutation(guard, { restore: true });
-    app.drawerDirty = true;
+    syncDrawerDirty();
   };
   const hasDirtyEdits = () => app.drawerDirty || app.dialogDirty;
   const storedWorkspace = () => {
@@ -516,7 +585,7 @@
       app.state = payload.state;
       renderAll();
       if (app.selectedId && (!drawerScope || isCurrentDrawer(drawerScope))) {
-        const refreshed = await loadContext(app.selectedId, { forceRender: true, quietError: Boolean(drawerGuard) });
+        const refreshed = await loadContext(app.selectedId, { forceRender: true, quietError: Boolean(drawerGuard), discardReviewDraft: Boolean(drawerGuard?.discardReviewDraft) });
         if (drawerGuard && isCurrentDrawer(drawerScope)) drawerGuard.contextLoaded = Boolean(refreshed);
       }
       if (!isCurrentWorkspace(scope)) return null;
@@ -848,14 +917,16 @@
     $$('[data-display]').forEach((button) => button.classList.toggle("is-active", button.dataset.display === display));
   }
 
-  async function loadContext(id, { forceRender = false, quietError = false } = {}) {
+  async function loadContext(id, { forceRender = false, quietError = false, discardReviewDraft = false } = {}) {
     const scope = captureWorkspace();
     const requestId = ++app.contextRequest;
     try {
       const context = await workspaceRequest(`/api/tickets/${encodeURIComponent(id)}/context`, {}, scope);
       if (!isCurrentWorkspace(scope) || app.selectedId !== id || requestId !== app.contextRequest) return;
       if (!scope.legacy && context?.workspace?.id !== scope.id) throw new Error("El contexto pertenece a otro proyecto");
+      if (!context?.ticket || context.ticket.id !== id) throw new Error("El contexto no corresponde a la tarea solicitada");
       if (!forceRender && app.drawerDirty) return;
+      if (discardReviewDraft) app.reviewDraft = null;
       app.context = context;
       if (forceRender || !app.drawerDirty) renderDrawer();
       return context;
@@ -963,16 +1034,15 @@
     if (ticket.status === "queued" && ticket.ready) sections.push(executionSection(ticket));
     sections.push(relationsSection(ticket), evidenceSection(ticket), sourceChecksSection(), contextSection(ticket));
     body.append(...sections);
-    app.drawerDirty = false;
-    const markDirty = () => { app.drawerDirty = true; };
-    $("#drawer-body").addEventListener("input", markDirty, { once: true });
-    $("#drawer-body").addEventListener("change", markDirty, { once: true });
+    registerDrawerForms(ticket);
   }
 
   function editSection(ticket) {
     const section = drawerSection("Definición");
     const form = node("form", "form-grid");
     form.dataset.form = "edit-ticket";
+    form.dataset.draftKey = "definition";
+    form.dataset.draftLabel = "Definición";
     const locked = ticket.status === "done";
     const titleControl = input("title", ticket.title); titleControl.required = true;
     form.append(field("Título", titleControl, "span-2"));
@@ -995,8 +1065,10 @@
     }
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const data = new FormData(form);
       const drawerScope = captureDrawer(ticket.id);
+      const consent = confirmOtherDrawerDrafts(form, drawerScope);
+      if (!consent) return;
+      const data = new FormData(form);
       const payload = {
         id: ticket.id,
         expected_revision: currentTicket().revision,
@@ -1008,7 +1080,7 @@
         depends_on: values(data.get("depends_on")),
         acceptance: values(data.get("acceptance"), /\n/)
       };
-      const drawerGuard = beginDrawerMutation(drawerScope);
+      const drawerGuard = beginDrawerMutation(drawerScope, consent);
       if (!drawerGuard) return;
       try {
         await mutate("update_ticket", payload, "Tarea actualizada", { drawerScope, drawerGuard });
@@ -1037,6 +1109,8 @@
       tabs.append(tab);
       const panel = buildActionPanel(id, ticket);
       panel.dataset.actionPanel = id;
+      panel.dataset.draftKey = `action:${id}`;
+      panel.dataset.draftLabel = label;
       panel.hidden = index !== 0;
       panels.append(panel);
     });
@@ -1069,6 +1143,8 @@
     }
     const running = (execution.runs || []).find((run) => run.status === "running");
     const form = node("form", "stack-form execution-form");
+    form.dataset.draftKey = "execution";
+    form.dataset.draftLabel = "Ejecución local";
     const workerSelect = select("worker_id", workers.map((worker) => [worker.id, worker.name]), workers[0].id);
     form.append(field("Ejecutor compatible", workerSelect));
     const configured = node("div", "execution-config");
@@ -1095,8 +1171,10 @@
         return;
       }
       const drawerScope = captureDrawer(ticket.id);
+      const consent = confirmOtherDrawerDrafts(form, drawerScope, { startRun: true });
+      if (!consent) return;
       const payload = { ticket_id: ticket.id, worker_id: workerSelect.value, expected_revision: openTicketState.revision };
-      const drawerGuard = beginDrawerMutation(drawerScope);
+      const drawerGuard = beginDrawerMutation(drawerScope, consent);
       if (!drawerGuard) return;
       try {
         await mutate("start_run", payload, "Ejecución iniciada", { drawerScope, drawerGuard });
@@ -1241,23 +1319,53 @@
     const draft = reviewDraftFor({ id: ticketId });
     if (!draft) return false;
     draft.refreshRequired = false;
-    app.drawerDirty = false;
     const refreshed = await loadContext(ticketId, { forceRender: true });
     if (!isCurrentDrawer(drawerScope)) return false;
     if (!refreshed) {
       draft.refreshRequired = true;
-      renderDrawer();
-      app.drawerDirty = true;
+      if (!drawerFormsAreCurrent()) renderDrawer();
+      else installCompletionRefreshRetry(ticketId, drawerScope);
       toast("No se pudo cargar el contexto actualizado. Tu borrador sigue guardado; usa Reintentar carga de contexto.", true);
       return false;
     }
     if (refreshed.ticket?.status !== "review") {
       app.reviewDraft = null;
+      syncDrawerDirty();
       toast("La tarea ya no está en revisión. Se cargó su estado actual y no se reenvió la aceptación.", true);
       return false;
     }
     toast("El contexto cambió. Revisa los datos actualizados y confirma de nuevo; no se ha reenviado la aceptación.", true);
     return true;
+  }
+
+  function installCompletionRefreshRetry(ticketId, drawerScope = captureDrawer(ticketId)) {
+    if (!isCurrentDrawer(drawerScope)) return;
+    const draft = reviewDraftFor({ id: ticketId });
+    if (!draft?.refreshRequired) return;
+    const form = $$('[data-action-panel]', $("#drawer-body")).find((panel) => panel.dataset.actionPanel === "complete");
+    if (!form) return;
+    const submit = $$('button', form).find((button) => button.type === "submit");
+    if (submit) submit.disabled = true;
+    if (form.querySelector('[data-completion-refresh]')) return;
+    const notice = node("div", "alert alert-error", "No se pudo cargar el contexto actualizado. Tus borradores siguen en pantalla y no se ha reenviado la aceptación.");
+    notice.dataset.completionRefresh = "true";
+    const retry = node("button", "button button-secondary button-small", "Reintentar carga de contexto");
+    retry.type = "button";
+    retry.addEventListener("click", async () => {
+      const currentDraft = reviewDraftFor({ id: ticketId });
+      if (!currentDraft || !isCurrentDrawer(drawerScope)) return;
+      const verification = $$('textarea', form).find((control) => control.name === "verification");
+      const criteria = $$('input', form).filter((control) => control.name === "accepted_criteria");
+      if (verification) currentDraft.verification = verification.value;
+      currentDraft.acceptedCriteria = criteria.filter((control) => control.checked).map((control) => control.value);
+      const retryGuard = beginDrawerMutation(drawerScope);
+      if (!retryGuard) return;
+      const loaded = await refreshCompletionContext(ticketId, drawerScope);
+      releaseDrawerMutation(retryGuard, { restore: !loaded });
+      if (!loaded) installCompletionRefreshRetry(ticketId, drawerScope);
+    });
+    form.append(notice, retry);
+    syncDrawerDirty();
   }
 
   async function handleCompletionConflict(ticket, payload, drawerScope = captureDrawer(ticket.id)) {
@@ -1279,9 +1387,11 @@
   async function submitActionForm(event, action, originalTicket) {
     event.preventDefault();
     const form = event.currentTarget;
-    const data = new FormData(form);
     const ticket = currentTicket() || originalTicket;
     const drawerScope = captureDrawer(ticket.id);
+    const consent = confirmOtherDrawerDrafts(form, drawerScope);
+    if (!consent) return;
+    const data = new FormData(form);
     const base = { id: ticket.id, expected_revision: ticket.revision };
     let apiAction = action;
     let payload = base;
@@ -1317,18 +1427,22 @@
     } else if (action === "split") {
       apiAction = "split_ticket"; payload = { ...base, children: values(data.get("children"), /\n/).map((title) => ({ title, profile_id: ticket.profile_id || null })) }; message = "Tarea dividida";
     }
-    const drawerGuard = beginDrawerMutation(drawerScope);
+    const drawerGuard = beginDrawerMutation(drawerScope, consent);
     if (!drawerGuard) return;
     try {
       await mutate(apiAction, payload, message, { drawerScope, drawerGuard });
       if (!isCurrentDrawer(drawerScope)) return;
-      if (action === "complete") app.reviewDraft = null;
+      if (action === "complete") {
+        app.reviewDraft = null;
+        syncDrawerDirty();
+      }
       finishConfirmedDrawerMutation(drawerGuard);
     } catch (error) {
       if (!isCurrentDrawer(drawerScope)) return;
       if (action === "complete" && acceptanceRefreshConflict(error)) {
-        await handleCompletionConflict(ticket, payload, drawerScope);
+        const refreshed = await handleCompletionConflict(ticket, payload, drawerScope);
         releaseDrawerMutation(drawerGuard);
+        if (!refreshed) installCompletionRefreshRetry(ticket.id, drawerScope);
         return;
       }
       finishRejectedDrawerMutation(drawerGuard);
