@@ -6,7 +6,7 @@
 
 Turn goals into prioritized tickets, share durable context between agents, and keep delivery separate from acceptance. Humans use the web board; agents use the MCP server. Both operate on the same SQLite database.
 
-AgentRelay 0.15 combines a persistent ticket board, an MCP server and optional worker execution. Agents find work through filtered summaries and open current context with recent history; older audit events remain available by cursor. Register multiple local projects, inspect their priorities without starting workers, import complete plans without duplicates, capture exact review inputs and inspect changes between verified captures. Reserve one of several reviewed tickets by priority without duplicate claims after retries. Find a ticket's worker executions, recover a retained proposal after a conflict and review it against the current ticket without launching the worker again. Compare saved reports with their receipts before relying on their byte integrity. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
+AgentRelay 0.16 combines a persistent ticket board, an MCP server and optional worker execution. Agents find work through filtered summaries and open current context with recent history; older audit events remain available by cursor. Register multiple local projects, inspect their priorities without starting workers, import complete plans without duplicates, capture exact review inputs and inspect changes between verified captures. Reserve one of several reviewed tickets by priority without duplicate claims after retries. Find a ticket's worker executions, recover a retained proposal after a conflict and review it against the current ticket without launching the worker again. Independent reviewers can return deliveries for correction while preserving the original evidence and keeping feedback in worker context. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
 
 ![AgentRelay local board with explicitly fictional demo data](docs/preview.jpg)
 
@@ -43,6 +43,7 @@ Windows quick launch: `powershell -File .\Start-AgentRelay.ps1 -Demo`. It prefer
 - Atomic claiming and optimistic revisions: two writers cannot silently overwrite the same ticket.
 - Checkpoints, comments, help requests and task splitting with preserved history.
 - Independent review with evidence references and explicit acceptance; cyclic dependency/hierarchy combinations are rejected.
+- Independent requests for correction through MCP/CLI, with preserved deliveries and durable feedback. [Correction workflow](docs/REVIEW_CHANGES.md).
 - Persistent audit history, versioned JSON export and isolated demonstration data.
 - MCP tools for external agents and a companion [skill](skills/agentrelay-work/SKILL.md).
 - Explicit worker launch/cancel, timeouts, bounded output, durable run history and conflict-safe results.
@@ -123,7 +124,7 @@ history. No audit events are deleted. [History and cursor examples](docs/HISTORY
 3. It saves findings; if it needs specialist input, it opens a help child with a reproduction. The parent becomes blocked.
 4. Another worker delivers the help. After review, the original owner or human explicitly requeues the parent.
 5. The worker resumes with the shared context, then submits artifacts for review.
-6. A different identity checks every criterion and closes the ticket. Parent goals still need their own integrated review.
+6. A different identity checks every criterion and closes the ticket, or returns it to the queue with concrete corrections using `request_ticket_changes`. The worker receives that feedback alongside the preserved delivery. Parent goals still need their own integrated review.
 
 Creating a ticket does not start a process. Urgency orders pending work but does not preempt an active agent. Help inherits its parent's priority when created; later priority changes remain explicit on each ticket. Evidence links are recorded references, not automatically verified artifacts.
 
@@ -139,7 +140,7 @@ python -m unittest discover -s tests -v
 
 Install `.[mcp]` to include the real SDK stdio integration test; otherwise it is explicitly skipped. The tests use disposable databases, including a complete help → resume → independent review scenario. No LLM is called.
 
-The latest [snapshot-diff validation](docs/VALIDATION_0_15.md) covers exact change context from real documentary pilots; [source-check validation](docs/VALIDATION_0_14.md) covers historical observations and transport integration. The project also has earlier browser QA of the human workflow. See [validation](docs/VALIDATION.md), [architecture and boundaries](docs/ARCHITECTURE.md) and [API contract](docs/CONTRACT.md).
+The latest [correction-workflow validation](docs/VALIDATION_0_16.md) covers real worker delivery, independent feedback and resubmission; [snapshot-diff validation](docs/VALIDATION_0_15.md) covers exact change context from documentary pilots. The project also has earlier browser QA of the human workflow. See [validation](docs/VALIDATION.md), [architecture and boundaries](docs/ARCHITECTURE.md) and [API contract](docs/CONTRACT.md).
 
 The active [GitHub Actions workflow](.github/workflows/tests.yml) tests Python 3.11/3.12 on Windows and Linux and checks JavaScript syntax. [See actual runs and results](https://github.com/VC-Anvil/agentrelay/actions/workflows/tests.yml); local and real-inference results are documented independently in the validation report.
 

@@ -133,6 +133,21 @@ local CLI functionality, not an MCP filesystem tool.
 
 An independent reviewer uses `review_ticket` only after inspecting the evidence against every acceptance criterion. Record what was actually verified and any limits. The author's connection cannot approve its own work. The human UI is a separate reviewer identity, not an automatic verification engine.
 
+If a delivered ticket needs correction, an independent reviewer can call
+`request_ticket_changes(ticket_id, expected_revision, reason)` with concrete
+findings. This explicitly returns a `review` ticket to the queue and releases
+its assignee; it preserves the author's checkpoint, evidence and acceptance.
+It does not start a worker, change dependencies or authorize additional scope.
+The equivalent local action is `request_changes` with `id`, `expected_revision`
+and `reason`. A stale retry conflicts; fetch current context before deciding
+whether another action is needed.
+
+Before resuming returned work, read `review_feedback` in current context. It
+keeps the latest correction request available even when recent events no longer
+include it. Its later-submission/completion flags describe recorded history;
+submission alone does not prove that the requested corrections were addressed.
+Preserve the original report and deliver a new version for independent review.
+
 Do not finish a parent merely because children closed: verify the integrated outcome. Cancellation does not satisfy an explicit dependency. When blocked by missing user input, write a focused question and preserve progress; do not poll or manufacture an answer.
 
 The MCP connection coordinates state; its tools do not launch models or grant permission to publish. An optional, separately configured execution manager can launch workers through the local UI or CLI. If running under its JSON result protocol, return the result to that manager instead of mutating the claimed ticket through MCP, which would invalidate its revision. External agents keep their own execution and approval rules.

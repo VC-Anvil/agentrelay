@@ -178,6 +178,16 @@ replay exits 0 regardless of advisory findings. CLI `source-checks` and
 only. There is no HTTP/MCP write action that accepts a source path or report.
 See [full source-check contract](SOURCE_CHECKS.md).
 
+An independent reviewer can use action `request_changes` with exactly
+`{id,expected_revision,reason}` to return a review ticket to queued. The revision
+must match and the stripped reason must contain 1–4000 characters. Self-review
+is rejected with the same identity rule as completion. The author's checkpoint,
+evidence, acceptance and dependencies are preserved; the assignee is released.
+No worker starts. MCP `request_ticket_changes` binds the reviewer to its server
+identity. Context includes the latest `review_feedback` independently of the
+recent-event page; its later-submission/completion flags are historical facts,
+not inferred review quality. [Exact correction workflow](REVIEW_CHANGES.md).
+
 Python `agentrelay.snapshot_diff.diff_snapshots(before, after, *,
 expected_before_id, expected_after_id, paths=None)` compares two explicitly
 identified, verified captures without opening a database or following their

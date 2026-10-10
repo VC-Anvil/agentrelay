@@ -28,6 +28,8 @@ def create_mcp(store: Store, actor: str) -> FastMCP:
         "events exist and list_ticket_events can fetch them only if needed. A bounded page is "
         "not evidence that earlier history is absent. Use the revision from current context or "
         "a successful mutation; reread after a conflict or before acting on historical values. "
+        "When review_feedback is present, read its latest explicit corrections before resuming; "
+        "a later submission flag records delivery timing, not acceptance or proof of correction. "
         "Use current revision for every mutation. Claim records the actual model/effort supplied "
         "by your host; recommended settings are not proof of availability. Use claim_next_ticket "
         "only after reading and authorizing every supplied candidate; preserve claim_ticket when "
@@ -110,7 +112,9 @@ def create_mcp(store: Store, actor: str) -> FastMCP:
         older event is absent. Use this current revision for the next mutation and
         reread after a conflict rather than replaying stale work. Its compact source
         checks are historical observations; ticket_revision_matches_now does not say
-        that source files still match.
+        that source files still match. Read review_feedback before resumed work; its
+        booleans report later audit events and never certify that corrections were
+        addressed or accepted.
         """
         if type(event_limit) is not int or not 1 <= event_limit <= 100:
             raise ValueError("event_limit must be an integer from 1 to 100")
@@ -293,6 +297,22 @@ def create_mcp(store: Store, actor: str) -> FastMCP:
         """Independent reviewer closes a delivered ticket after checking every acceptance criterion."""
         return act("complete_ticket", {"id": ticket_id, "expected_revision": expected_revision,
                                       "verification": verification, "accepted_criteria": accepted_criteria})
+
+    @server.tool(annotations=write)
+    def request_ticket_changes(ticket_id: str, expected_revision: StrictInt, reason: str) -> dict:
+        """Return a delivered ticket to its queue with explicit corrections.
+
+        This independent review decision clears ownership but preserves the submitted
+        checkpoint, evidence and acceptance criteria. It does not execute, claim,
+        reopen completed work or accept the delivery. Read fresh context before the
+        call and use its current revision; a stale retry conflicts rather than adding
+        duplicate feedback.
+        """
+        if type(expected_revision) is not int or expected_revision < 1:
+            raise ValueError("expected_revision must be a positive integer")
+        return act("request_changes", {"id": ticket_id,
+                                      "expected_revision": expected_revision,
+                                      "reason": reason})
 
     @server.tool(annotations=write)
     def add_comment(ticket_id: str, body: str) -> dict:

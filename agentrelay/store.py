@@ -335,6 +335,8 @@ class Store:
                        "profile": next((p for p in profiles if p["id"] == ticket["profile_id"]), None),
                        "profiles": profiles,
                        "instructions": "Review acceptance, dependencies, checkpoint and evidence. Evidence references require independent verification. Record progress with checkpoint, then submit for review."}
+            context["review_feedback"] = self._review_feedback(db, ticket["id"])
+            context["instructions"] += " Read the latest review feedback; a later submission is not acceptance."
             from .source_checks import _page_in_tx
             checks_page = _page_in_tx(db, ticket["id"], 3, current_revision=ticket["revision"])
             context["source_checks"] = checks_page["checks"]
@@ -345,6 +347,29 @@ class Store:
                 context["events_page"] = {key: page[key] for key in ("total", "count", "limit", "next_before_id")}
             db.commit()
             return context
+
+    def _review_feedback(self, db, ticket_id):
+        row = db.execute(
+            "SELECT id,actor,details,created_at FROM events "
+            "WHERE ticket_id=? AND action='request_changes' ORDER BY id DESC LIMIT 1",
+            (ticket_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        details = json.loads(row["details"])
+        later = {event[0] for event in db.execute(
+            "SELECT DISTINCT action FROM events WHERE ticket_id=? AND id>? "
+            "AND action IN ('submit_ticket','complete_ticket')",
+            (ticket_id, row["id"]),
+        )}
+        return {"event_id": row["id"], "reviewer": row["actor"],
+                "reason": details["reason"],
+                "previous_assignee": details["previous_assignee"],
+                "submitted_revision": details["submitted_revision"],
+                "returned_revision": details["returned_revision"],
+                "created_at": row["created_at"],
+                "submission_after_request": "submit_ticket" in later,
+                "completion_after_request": "complete_ticket" in later}
 
     def is_demo(self):
         with self._connection() as db:
@@ -775,6 +800,32 @@ class Store:
         self._event(db, row["id"], actor, "complete_ticket", {"reviewer": actor, "verification": verification, "accepted_criteria": accepted})
         return self._ticket(db, row["id"])
 
+    def _request_changes(self, db, data, actor):
+        if set(data) != {"id", "expected_revision", "reason"}:
+            raise DomainError("request_changes requires id, expected_revision, reason only")
+        if len(actor) > 128:
+            raise DomainError("actor must contain at most 128 characters")
+        revision = data["expected_revision"]
+        if type(revision) is not int or revision < 1:
+            raise DomainError("expected_revision must be a positive integer")
+        reason = _nonempty(data["reason"], "reason")
+        if len(reason) > 4000:
+            raise DomainError("reason must contain at most 4000 characters")
+        ticket_id = _nonempty(data["id"], "id")
+        row = self._require_ticket(db, ticket_id)
+        self._expect(row, data)
+        if row["status"] != "review":
+            raise DomainError("request_changes requires review ticket", 409)
+        if self._actor_identity(actor) == self._actor_identity(row["assignee"]):
+            raise DomainError("assignee cannot review own work", 409)
+        self._update_row(db, row["id"], {"status": "queued", "assignee": None,
+                                          "blocked_reason": ""})
+        self._event(db, row["id"], actor, "request_changes",
+                    {"reason": reason, "previous_assignee": row["assignee"],
+                     "submitted_revision": row["revision"],
+                     "returned_revision": row["revision"] + 1})
+        return self._ticket(db, row["id"])
+
     def _help(self, db, data, actor):
         row = self._require_ticket(db, data.get("id"))
         self._expect(row, data)
@@ -897,6 +948,8 @@ class Store:
                 return self._submit(db, data, actor)
             if action == "complete_ticket":
                 return self._complete(db, data, actor)
+            if action == "request_changes":
+                return self._request_changes(db, data, actor)
             if action == "request_help":
                 return self._help(db, data, actor)
             if action == "split_ticket":
