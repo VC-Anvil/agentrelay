@@ -25,6 +25,23 @@ Read current context before claiming or editing. It includes the ticket revision
 
 Claim with the current revision and the actual host model and effort when known. Profile values are recommendations, not execution facts: never copy them into actual settings or report an unavailable model. For a non-Astra profile, use `unknown` as an explicit declaration when the host does not expose model or effort; missing metadata does not require routine confirmation and does not grant extra permission. An Astra assignment may be claimed only from a known actual `gpt-6-astra` host at `high` effort. Unknown or incompatible Astra settings block the claim; never downgrade or disguise that mismatch.
 
+When several already reviewed, authorized tickets are equally within your scope,
+`claim_next_ticket` can reserve one from an explicit list of 1–64 candidates.
+Supply each candidate's `ticket_id` and reviewed `expected_revision`, a fresh
+`request_id`, and actual host settings. It chooses the highest-priority eligible
+candidate within that list; stale revisions and blocked or incompatible work are
+skipped. It never searches outside the list. Preserve a ticket chosen by the user
+with ordinary `claim_ticket`; do not add unrelated candidates to avoid a conflict.
+
+After an uncertain response, repeat exactly the same request ID, actor and payload
+to recover its original receipt without another claim. The receipt is historical,
+including a null ticket when none was eligible. Fetch fresh context for a returned
+ticket before continuing; never treat an old receipt as a current assignment.
+A new selection requires a new request ID and newly reviewed candidate revisions.
+Request IDs are shared by `create_plan` and `claim_next_ticket` within a project;
+never reuse a plan's ID for a claim or a claim's ID for a plan.
+Reservation does not launch a model, authorize execution or accept a result.
+
 Context includes up to 20 recent audit events by default. When `events_page.next_before_id` is non-null, older history exists. Use `list_ticket_events(ticket_id, before_id, limit)` only when the task needs it; continue with its next cursor. Historical event fields can be obsolete, so use the current ticket revision for mutations and reread context after conflicts or before acting on historical values. Do not infer that an event never happened because it is absent from the recent page. CLI equivalents are `context --event-limit` and `history --before-id`; `context --all-events` explicitly retrieves everything.
 
 ## Create a plan

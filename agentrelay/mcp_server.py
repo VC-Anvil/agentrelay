@@ -27,7 +27,10 @@ def create_mcp(store: Store, actor: str) -> FastMCP:
         "not evidence that earlier history is absent. Use the revision from current context or "
         "a successful mutation; reread after a conflict or before acting on historical values. "
         "Use current revision for every mutation. Claim records the actual model/effort supplied "
-        "by your host; recommended settings are not proof of availability. Checkpoint before "
+        "by your host; recommended settings are not proof of availability. Use claim_next_ticket "
+        "only after reading and authorizing every supplied candidate; preserve claim_ticket when "
+        "the user chose a specific task. An exact request replay returns a historical receipt, "
+        "so fetch fresh context before work. Checkpoint before "
         "handoff, request help with diagnostic evidence, submit results for independent review. "
         "A retained run result is a proposal, not an applied or accepted deliverable; after a "
         "conflict discover relevant runs with list_runs, read only the chosen proposal with "
@@ -37,6 +40,8 @@ def create_mcp(store: Store, actor: str) -> FastMCP:
     ))
     read = ToolAnnotations(readOnlyHint=True, destructiveHint=False)
     write = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False)
+    idempotent_write = ToolAnnotations(readOnlyHint=False, destructiveHint=False,
+                                       idempotentHint=True)
 
     def act(action: str, data: dict):
         try:
@@ -195,6 +200,23 @@ def create_mcp(store: Store, actor: str) -> FastMCP:
         """Atomically reserve ready work for this connection's actor; declare actual host settings."""
         return act("claim_ticket", {"id": ticket_id, "expected_revision": expected_revision,
                                    "assignee": actor, "actual_model": actual_model, "actual_effort": actual_effort})
+
+    @server.tool(annotations=idempotent_write)
+    def claim_next_ticket(request_id: str, candidates: list[dict],
+                          actual_model: str, actual_effort: str) -> dict:
+        """Claim at most one ticket from a fully reviewed, explicitly authorized candidate set.
+
+        Read current context for every candidate before this call. Each candidate must
+        contain only ticket_id and expected_revision. The backend skips stale or no
+        longer eligible candidates and chooses by priority without claiming outside
+        this list. Retry an uncertain call with the exact same request ID and payload;
+        its receipt is historical, so read fresh context before starting work. Use
+        claim_ticket instead when the user selected a specific ticket.
+        """
+        return act("claim_next_ticket", {
+            "request_id": request_id, "candidates": candidates, "assignee": actor,
+            "actual_model": actual_model, "actual_effort": actual_effort,
+        })
 
     @server.tool(annotations=write)
     def save_checkpoint(ticket_id: str, expected_revision: int, checkpoint: str) -> dict:

@@ -140,6 +140,12 @@ for the response contract and cancellation/crash limits.
 
 ## Backup and restore
 
+External agents using MCP can reserve one of several explicitly reviewed tickets
+with `claim_next_ticket`; [scoped claim receipts](CLAIM_NEXT.md) prevent a repeated
+request from reserving additional work. This does not start an execution manager
+or replace the configured worker's existing queue. SQLite backup preserves these
+receipts alongside plan receipts; the bulk JSON export is not a complete restore.
+
 JSON export includes ticket/profile/audit/run history for inspection. For a complete
 restorable database, use SQLite's online backup through AgentRelay:
 

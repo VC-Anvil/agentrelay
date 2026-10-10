@@ -128,6 +128,10 @@ class Store:
                     request_id TEXT PRIMARY KEY, actor TEXT NOT NULL,
                     payload_hash TEXT NOT NULL, result TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS claim_requests (
+                    request_id TEXT PRIMARY KEY, actor TEXT NOT NULL,
+                    payload_hash TEXT NOT NULL, result TEXT NOT NULL
+                );
             """)
             for row in DEFAULT_PROFILES:
                 db.execute("INSERT OR IGNORE INTO profiles VALUES (?,?,?,?,?,?,?,?,?)",
@@ -446,6 +450,8 @@ class Store:
             if prior["actor"] != actor or prior["payload_hash"] != payload_hash:
                 raise DomainError("request_id already used with different actor or payload", 409)
             return json.loads(prior["result"])
+        if db.execute("SELECT 1 FROM claim_requests WHERE request_id=?", (request_id,)).fetchone():
+            raise DomainError("request_id already used by claim_next_ticket", 409)
 
         allowed = EDITABLE | {"key", "parent_key", "depends_on_keys", "status"}
         keys = set()
@@ -601,6 +607,83 @@ class Store:
                                          "actual_model": actual_model, "actual_effort": actual_effort})
         self._event(db, row["id"], actor, "claim_ticket", {"assignee": assignee, "actual_model": actual_model, "actual_effort": actual_effort})
         return self._ticket(db, row["id"])
+
+    def _claim_next_ticket(self, db, data, actor):
+        required = {"request_id", "candidates", "assignee", "actual_model", "actual_effort"}
+        if set(data) != required:
+            raise DomainError("claim_next_ticket requires request_id, candidates, assignee, actual_model, actual_effort only")
+        request_id = self._plan_identifier(data["request_id"], "request_id", 128)
+        candidates = data["candidates"]
+        if not isinstance(candidates, list) or not 1 <= len(candidates) <= 64:
+            raise DomainError("candidates must contain 1 to 64 entries")
+        seen = set()
+        for candidate in candidates:
+            if not isinstance(candidate, dict) or set(candidate) != {"ticket_id", "expected_revision"}:
+                raise DomainError("each candidate requires ticket_id and expected_revision only")
+            ticket_id = self._plan_identifier(candidate["ticket_id"], "ticket_id", 128)
+            if ticket_id in seen:
+                raise DomainError("duplicate candidate ticket_id")
+            seen.add(ticket_id)
+            revision = candidate["expected_revision"]
+            if type(revision) is not int or revision < 1:
+                raise DomainError("expected_revision must be a positive integer")
+        assignee = self._plan_identifier(data["assignee"], "assignee", 128)
+        actual_model = self._plan_identifier(data["actual_model"], "actual_model", 128)
+        actual_effort = self._plan_identifier(data["actual_effort"], "actual_effort", 128)
+        try:
+            canonical = json.dumps(data, ensure_ascii=False, sort_keys=True,
+                                   separators=(",", ":"), allow_nan=False)
+            payload_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        except (TypeError, ValueError, UnicodeError) as exc:
+            raise DomainError("claim_next_ticket data must be JSON-compatible") from exc
+        prior = db.execute("SELECT actor,payload_hash,result FROM claim_requests WHERE request_id=?",
+                           (request_id,)).fetchone()
+        if prior is not None:
+            if prior["actor"] != actor or prior["payload_hash"] != payload_hash:
+                raise DomainError("request_id already used with different actor or payload", 409)
+            return json.loads(prior["result"])
+        if db.execute("SELECT 1 FROM plan_requests WHERE request_id=?", (request_id,)).fetchone():
+            raise DomainError("request_id already used by create_plan", 409)
+        if actor != "human" and self._actor_identity(actor) != self._actor_identity(assignee):
+            raise DomainError("agent actor must match assignee", 409)
+
+        # Validate the complete caller-supplied scope before considering a claim.
+        rows = {candidate["ticket_id"]: self._require_ticket(db, candidate["ticket_id"])
+                for candidate in candidates}
+        skipped = []
+        eligible = []
+        for candidate in candidates:
+            ticket_id = candidate["ticket_id"]
+            row = rows[ticket_id]
+            reason = None
+            if row["revision"] != candidate["expected_revision"]:
+                reason = "stale_revision"
+            elif not self._ticket(db, ticket_id)["ready"]:
+                reason = "not_ready"
+            elif not json.loads(row["acceptance"]):
+                reason = "missing_acceptance"
+            elif row["profile_id"] == "astra" and (actual_model != "gpt-6-astra" or
+                                                    actual_effort != "high"):
+                reason = "incompatible_profile"
+            if reason is not None:
+                skipped.append({"ticket_id": ticket_id, "reason": reason})
+            else:
+                eligible.append(row)
+
+        claimed = None
+        if eligible:
+            rank = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
+            selected = min(eligible, key=lambda row: (rank[row["priority"]], row["created_at"], row["id"]))
+            claimed = self._claim(db, {"id": selected["id"], "expected_revision": selected["revision"],
+                                       "assignee": assignee, "actual_model": actual_model,
+                                       "actual_effort": actual_effort}, actor)
+        result = {"request_id": request_id, "ticket": claimed, "skipped": skipped}
+        self._event(db, None, actor, "claim_next_ticket",
+                    {"request_id": request_id, "selected_ticket_id": claimed["id"] if claimed else None,
+                     "skipped": skipped})
+        db.execute("INSERT INTO claim_requests(request_id,actor,payload_hash,result) VALUES(?,?,?,?)",
+                   (request_id, actor, payload_hash, _json(result)))
+        return result
 
     def _checkpoint(self, db, data, actor):
         row = self._require_ticket(db, data.get("id"))
@@ -760,6 +843,8 @@ class Store:
                 return self._transition(db, data, actor)
             if action == "claim_ticket":
                 return self._claim(db, data, actor)
+            if action == "claim_next_ticket":
+                return self._claim_next_ticket(db, data, actor)
             if action == "checkpoint":
                 return self._checkpoint(db, data, actor)
             if action == "submit_ticket":
