@@ -10,6 +10,9 @@ from pathlib import Path
 from .store import DomainError, Store
 
 
+BOOTSTRAP_ACTIONS = {"create_ticket", "create_plan", "create_profile"}
+
+
 def main():
     # JSON command output is UTF-8 even when Windows pipes default to a code page.
     for stream in (sys.stdout, sys.stderr):
@@ -133,22 +136,29 @@ def main():
             if (not isinstance(request, dict) or set(request) != {"action", "data"}
                     or not isinstance(request["action"], str) or not isinstance(request["data"], dict)):
                 raise ValueError("Expected an object with exactly action (string) and data (object)")
-        except (ValueError, OSError) as exc:
+        except (ValueError, OSError, RecursionError) as exc:
             parser.exit(1, f"Action input: {exc}\n")
+        if not args.actor.strip():
+            parser.error("--actor must be a nonempty identity")
+    if args.command == "mcp" and (not args.actor.startswith("agent:") or not args.actor[6:].strip()):
+        # Reject an invalid identity before a default or explicit database path can be initialized.
+        parser.error("--actor must be a nonempty agent:<name> identity")
     demo = getattr(args, "demo", False)
     database = args.db or Path.cwd() / ".agentrelay" / ("demo.sqlite" if demo else "workspace.sqlite")
-    database = database.expanduser().resolve()
-    if args.command in {"context", "history", "export", "runs", "run-result", "backup"}:
-        from .workspaces import require_agentrelay_database
-        try:
+    requires_existing = args.command in {
+        "context", "history", "export", "runs", "run-result", "backup", "run"
+    } or (args.command == "action" and request["action"] not in BOOTSTRAP_ACTIONS)
+    try:
+        # Store/the read preflight inspect the selected path before resolving it, including symlinks.
+        database = database.expanduser()
+        if requires_existing:
+            from .workspaces import require_agentrelay_database
             database = require_agentrelay_database(database)
-        except DomainError as exc:
-            parser.exit(1, f"Database: {exc}\n")
-    else:
-        database.parent.mkdir(parents=True, exist_ok=True)
-    store = Store(database)
-    if demo:
-        store.seed_demo()
+        store = Store(database)
+        if demo:
+            store.seed_demo()
+    except (DomainError, OSError, RuntimeError, sqlite3.Error) as exc:
+        parser.exit(1, f"Database: {exc}\n")
     if args.command in {"action", "context", "history", "runs", "run-result"}:
         try:
             if args.command == "action":
@@ -220,8 +230,6 @@ def main():
         except OSError as exc:
             parser.exit(1, f"Backup failed: {exc}\n")
     elif args.command == "mcp":
-        if not args.actor.startswith("agent:") or not args.actor[6:].strip():
-            parser.error("--actor must be a nonempty agent:<name> identity")
         try:
             from .mcp_server import run
         except ImportError as exc:

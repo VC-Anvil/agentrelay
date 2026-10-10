@@ -30,6 +30,8 @@ choose arbitrary commands, arguments or working directories. Each entry contains
 profile; a nonempty list requires an exact ticket profile match. Astra always
 requires `gpt-6-astra` / `high`.
 
+CLI `run` requires an existing recognized AgentRelay database and does not initialize a missing path. See [database selection](DATABASES.md).
+
 There is one running worker and one execution manager per database. Separate
 databases are separate projects; the user must avoid concurrent workers changing
 the same files through different databases. Urgency never interrupts active work.

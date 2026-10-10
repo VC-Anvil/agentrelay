@@ -4,22 +4,9 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
-import sqlite3
 
+from .database import BASE_SCHEMA_COLUMNS, DatabaseRecognitionError, recognize_agentrelay_database
 from .store import DomainError, Store
-
-
-BASE_SCHEMA_COLUMNS = {
-    "profiles": {"id", "name", "role", "provider", "model", "effort", "capabilities",
-                 "preference", "description"},
-    "tickets": {"id", "title", "description", "type", "status", "priority", "parent_id",
-                "profile_id", "acceptance", "checkpoint", "evidence", "assignee",
-                "actual_model", "actual_effort", "blocked_reason", "revision", "created_at",
-                "updated_at"},
-    "dependencies": {"ticket_id", "depends_on"},
-    "events": {"id", "ticket_id", "actor", "action", "details", "created_at"},
-    "metadata": {"key", "value"},
-}
 
 
 @dataclass
@@ -36,30 +23,10 @@ class Workspace:
 
 def require_agentrelay_database(database):
     """Resolve and identify an existing AgentRelay database without migrating it."""
-    path = Path(database).expanduser().resolve()
-    if not path.is_file():
-        raise DomainError(f"Workspace database does not exist: {path}")
     try:
-        connection = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
-        try:
-            tables = {row[0] for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'")}
-            if not BASE_SCHEMA_COLUMNS.keys() <= tables:
-                raise DomainError(f"Not an initialized AgentRelay database: {path}")
-            columns = {
-                table: {row[1] for row in connection.execute(f'PRAGMA table_info("{table}")')}
-                for table in BASE_SCHEMA_COLUMNS
-            }
-            missing = {table: required - columns[table]
-                       for table, required in BASE_SCHEMA_COLUMNS.items()
-                       if not required.issubset(columns[table])}
-            if missing:
-                raise DomainError(f"Not an initialized AgentRelay database: {path}")
-        finally:
-            connection.close()
-    except sqlite3.Error as exc:
-        raise DomainError(f"Cannot read AgentRelay database: {path}") from exc
-    return path
+        return recognize_agentrelay_database(database)
+    except DatabaseRecognitionError as exc:
+        raise DomainError(str(exc)) from exc
 
 
 def load_workspaces(config_path, *, enable_execution=True):

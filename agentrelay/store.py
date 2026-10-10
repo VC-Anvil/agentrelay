@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
+from .database import DatabaseRecognitionError, recognize_agentrelay_database
 
 
 TYPES = {"objective", "task", "bug", "research", "review", "help"}
@@ -92,7 +93,24 @@ def _evidence(value, *, nonempty: bool = False) -> list[dict]:
 
 class Store:
     def __init__(self, path: str | Path):
-        self.path = str(path)
+        try:
+            candidate = Path(path).expanduser()
+        except (OSError, RuntimeError, TypeError) as exc:
+            raise DomainError(f"Cannot resolve database path: {path}") from exc
+        try:
+            candidate.lstat()
+        except FileNotFoundError:
+            try:
+                self.path = str(candidate.resolve())
+            except (OSError, RuntimeError) as exc:
+                raise DomainError(f"Cannot resolve database path: {candidate}") from exc
+        except OSError as exc:
+            raise DomainError(f"Cannot inspect database path: {candidate}") from exc
+        else:
+            try:
+                self.path = str(recognize_agentrelay_database(candidate))
+            except DatabaseRecognitionError as exc:
+                raise DomainError(str(exc)) from exc
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         with self._connection() as db:
             db.execute("PRAGMA journal_mode=WAL")

@@ -50,7 +50,7 @@ Use `create_plan` when the authorized outcome needs a coherent graph rather than
 
 After an uncertain response, retry with exactly the same request ID, actor and payload to recover the original receipt without duplicates. A used ID with a different actor or payload conflicts; a changed plan needs a new ID. The receipt is creation-time data, so fetch fresh context before any later claim or edit. Plan creation does not run work or approve results.
 
-If MCP is unavailable and the authorized CLI fallback is used, pass an exact `{action:"create_plan",data:{...}}` JSON envelope to `agentrelay action --db ... --actor ... --input ...`. Do not silently switch projects or create a default database.
+If MCP is unavailable and the authorized CLI fallback is used, pass an exact `{action:"create_plan",data:{...}}` JSON envelope to `agentrelay action --db ... --actor ... --input ...`. Do not silently switch projects or create a default database. Creation actions can initialize a nonexistent path, so verify the exact intended database before sending them. If an existing file is rejected as unrecognized, stop and correct the selection; do not remove, replace or truncate that file to make initialization succeed.
 
 ## Develop the work graph
 

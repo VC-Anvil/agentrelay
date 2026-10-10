@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -19,6 +20,7 @@ from .workspaces import Workspace
 
 STATIC = Path(__file__).with_name("static")
 MAX_BODY = 1_048_576
+REJECT_BODY_TIMEOUT = 1.0
 
 
 class AppServer(ThreadingHTTPServer):
@@ -86,11 +88,40 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, status: int, value, **headers):
         self._reply(status, json.dumps(value, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8", **headers)
 
+    def _reject_unread(self, status: int, message: str):
+        # Closing with an unread POST body can reset the socket before the client
+        # receives our error. Discard a bounded, explicitly framed body without
+        # parsing it or touching domain state; slow senders get one second total.
+        if self.command == "POST":
+            lengths = self.headers.get_all("Content-Length", [])
+            if (len(lengths) == 1 and not self.headers.get("Transfer-Encoding")
+                    and len(lengths[0]) <= 20 and lengths[0].isascii()
+                    and lengths[0].isdecimal()):
+                remaining = int(lengths[0])
+                if 0 < remaining <= MAX_BODY:
+                    previous_timeout = self.connection.gettimeout()
+                    deadline = time.monotonic() + REJECT_BODY_TIMEOUT
+                    try:
+                        while remaining:
+                            timeout = deadline - time.monotonic()
+                            if timeout <= 0:
+                                break
+                            self.connection.settimeout(timeout)
+                            chunk = self.rfile.read1(min(remaining, 65536))
+                            if not chunk:
+                                break
+                            remaining -= len(chunk)
+                    except OSError:
+                        pass
+                    finally:
+                        self.connection.settimeout(previous_timeout)
+        self._json(status, {"error": message})
+
     def _host_ok(self) -> bool:
         host = self.headers.get("Host", "")
         port = self.server.server_port
         if host not in {f"127.0.0.1:{port}", f"localhost:{port}"}:
-            self._json(403, {"error": "Host no permitido. Usa la dirección local del servidor."})
+            self._reject_unread(403, "Host no permitido. Usa la dirección local del servidor.")
             return False
         return True
 
@@ -99,16 +130,16 @@ class Handler(BaseHTTPRequestHandler):
             return False
         origin = self.headers.get("Origin")
         if origin and origin != f"http://{self.headers.get('Host')}":
-            self._json(403, {"error": "Origen no permitido."})
+            self._reject_unread(403, "Origen no permitido.")
             return False
         if self.headers.get("Sec-Fetch-Site") == "cross-site":
-            self._json(403, {"error": "Petición externa no permitida."})
+            self._reject_unread(403, "Petición externa no permitida.")
             return False
         if self.headers.get("X-AgentRelay-Client") != "browser":
-            self._json(403, {"error": "Falta la identificación del cliente local."})
+            self._reject_unread(403, "Falta la identificación del cliente local.")
             return False
         if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
-            self._json(415, {"error": "Se requiere application/json."})
+            self._reject_unread(415, "Se requiere application/json.")
             return False
         return True
 
@@ -149,7 +180,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._write_ok():
             return
         if urlsplit(self.path).path != "/api/actions":
-            self._json(404, {"error": "No encontrado."})
+            self._reject_unread(404, "No encontrado.")
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
