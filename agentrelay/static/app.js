@@ -338,7 +338,7 @@
     await loadState();
   }
 
-  async function loadState({ quiet = false } = {}) {
+  async function loadState({ quiet = false, drawerScope = null } = {}) {
     const scope = captureWorkspace();
     const dataEpoch = app.dataEpoch;
     if (!scope.id || app.mutationCount || app.loadingEpoch === scope.epoch) return;
@@ -355,7 +355,7 @@
       $("#loading-state").hidden = true;
       showSection(app.section, false);
       renderAll();
-      if (app.selectedId && !app.drawerDirty) {
+      if (app.selectedId && !app.drawerDirty && (!drawerScope || isCurrentDrawer(drawerScope))) {
         const latest = state.tickets?.find((ticket) => ticket.id === app.selectedId);
         const nextRuns = JSON.stringify((state.execution?.runs || []).map((run) => [run.id, run.status, run.finished_at]));
         if (!app.context || latest?.revision !== app.context.ticket?.revision || previousRuns !== nextRuns) {
@@ -403,13 +403,13 @@
     } catch (error) {
       if (!isCurrentWorkspace(scope)) return null;
       if (!drawerScope || isCurrentDrawer(drawerScope)) toast(error.message, true);
-      if (action !== "complete_ticket" && /revision|conflict|actualiz|cambió/i.test(error.message)) reloadAfterMutation = true;
+      if (action !== "complete_ticket" && (!drawerScope || isCurrentDrawer(drawerScope)) && /revision|conflict|actualiz|cambió/i.test(error.message)) reloadAfterMutation = true;
       throw error;
     } finally {
       app.mutationCount = Math.max(0, app.mutationCount - 1);
       app.dataEpoch += 1;
       syncWorkspaceControls();
-      if (reloadAfterMutation && isCurrentWorkspace(scope)) await loadState({ quiet: true });
+      if (reloadAfterMutation && isCurrentWorkspace(scope) && (!drawerScope || isCurrentDrawer(drawerScope))) await loadState({ quiet: true, drawerScope });
     }
   }
 
@@ -862,6 +862,7 @@
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const data = new FormData(form);
+      const drawerScope = captureDrawer(ticket.id);
       try {
         await mutate("update_ticket", {
           id: ticket.id,
@@ -873,7 +874,8 @@
           profile_id: data.get("profile_id") || null,
           depends_on: values(data.get("depends_on")),
           acceptance: values(data.get("acceptance"), /\n/)
-        }, "Tarea actualizada");
+        }, "Tarea actualizada", { drawerScope });
+        if (!isCurrentDrawer(drawerScope)) return;
         app.drawerDirty = false;
       } catch (_) { /* shown globally */ }
     });
@@ -956,10 +958,12 @@
         return;
       }
       start.disabled = true;
+      const drawerScope = captureDrawer(ticket.id);
       try {
-        await mutate("start_run", { ticket_id: ticket.id, worker_id: workerSelect.value, expected_revision: openTicketState.revision }, "Ejecución iniciada");
+        await mutate("start_run", { ticket_id: ticket.id, worker_id: workerSelect.value, expected_revision: openTicketState.revision }, "Ejecución iniciada", { drawerScope });
+        if (!isCurrentDrawer(drawerScope)) return;
         app.drawerDirty = false;
-      } catch (_) { start.disabled = false; }
+      } catch (_) { if (isCurrentDrawer(drawerScope)) start.disabled = false; }
     });
     section.append(form);
     return section;
@@ -1138,7 +1142,7 @@
     const form = event.currentTarget;
     const data = new FormData(form);
     const ticket = currentTicket() || originalTicket;
-    const completionScope = action === "complete" ? captureDrawer(ticket.id) : null;
+    const drawerScope = captureDrawer(ticket.id);
     const base = { id: ticket.id, expected_revision: ticket.revision };
     let apiAction = action;
     let payload = base;
@@ -1175,14 +1179,14 @@
       apiAction = "split_ticket"; payload = { ...base, children: values(data.get("children"), /\n/).map((title) => ({ title, profile_id: ticket.profile_id || null })) }; message = "Tarea dividida";
     }
     try {
-      await mutate(apiAction, payload, message, { drawerScope: completionScope });
-      if (completionScope && !isCurrentDrawer(completionScope)) return;
+      await mutate(apiAction, payload, message, { drawerScope });
+      if (!isCurrentDrawer(drawerScope)) return;
       if (action === "complete") app.reviewDraft = null;
       app.drawerDirty = false;
     } catch (error) {
-      if (completionScope && !isCurrentDrawer(completionScope)) return;
+      if (!isCurrentDrawer(drawerScope)) return;
       if (action !== "complete" || !acceptanceRefreshConflict(error)) return;
-      await handleCompletionConflict(ticket, payload, completionScope);
+      await handleCompletionConflict(ticket, payload, drawerScope);
     }
   }
 

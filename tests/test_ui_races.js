@@ -278,6 +278,27 @@ function completionForm(token = OLD_TOKEN, verification = "Revisión pendiente")
   return form;
 }
 
+function drawerActionForm(action) {
+  const form = new FakeElement("form");
+  const fields = {
+    checkpoint: [["checkpoint", "Avance de A"]],
+    submit: [["summary", "Entrega A"], ["evidence_kind", "test"], ["evidence_label", "Fixture A"], ["evidence_uri", "fixture://a"]],
+    comment: [["body", "Comentario de A"]]
+  };
+  form.formValues = new Map(fields[action]);
+  return form;
+}
+
+function contextForTicket(id, title, status, token = OLD_TOKEN) {
+  const value = reviewContext("a", token);
+  value.ticket.id = id;
+  value.ticket.title = title;
+  value.ticket.status = status;
+  value.ticket.assignee = status === "in_progress" ? "human" : "agent:author";
+  if (status !== "review") value.acceptance_context = null;
+  return value;
+}
+
 function loadHarness() {
   const source = fs.readFileSync(APP_PATH, "utf8");
   const occurrences = countOccurrences(source, BOOTSTRAP);
@@ -691,6 +712,176 @@ async function completionCannotOverwriteReopenedSameTicket() {
   assert.equal(h.app.reviewDraft, null);
 }
 
+async function updateSaveCannotOverwriteEditedDrawerB() {
+  const h = loadHarness();
+  h.app.selectedId = "T-1";
+  h.app.context = contextForTicket("T-1", "Definición A", "queued");
+  h.renderDrawer();
+  const editA = findElement(h.byId("drawer-body"), (element) => element.dataset.form === "edit-ticket");
+  editA.formValues = new Map([
+    ["title", "A editada"], ["description", "Descripción A"], ["type", "task"],
+    ["priority", "normal"], ["parent_id", ""], ["profile_id", ""],
+    ["depends_on", ""], ["acceptance", "Criterio A"]
+  ]);
+  const pending = editA.dispatch("submit", { preventDefault() {} });
+  assert.equal(h.transport.calls.length, 1);
+
+  h.openTicket("T-2");
+  const contextB = contextForTicket("T-2", "Definición B", "review", NEW_TOKEN);
+  h.transport.respond(1, contextB);
+  await new Promise((resolve) => setImmediate(resolve));
+  const titleB = findElement(h.byId("drawer-body"), (element) => element.name === "title");
+  titleB.value = "B editada sin guardar";
+  h.app.drawerDirty = true;
+
+  const updatedA = { ...ticket("A editada"), status: "queued", revision: 2 };
+  h.transport.respond(0, { result: updatedA, state: state("a", "update-a", [updatedA, contextB.ticket]) });
+  await pending;
+  assert.equal(h.transport.calls.length, 2, "update_ticket A forzó una recarga de B");
+  assert.equal(findElement(h.byId("drawer-body"), (element) => element.name === "title"), titleB);
+  assert.equal(titleB.value, "B editada sin guardar");
+  assert.equal(h.app.drawerDirty, true);
+  assert.equal(h.app.state.marker, "update-a");
+}
+
+async function checkpointStillRefreshesItsOriginalDrawer() {
+  const h = loadHarness();
+  h.app.selectedId = "T-1";
+  h.app.context = contextForTicket("T-1", "Avance A", "in_progress");
+  h.app.drawerDirty = true;
+  const pending = h.submitActionForm({ preventDefault() {}, currentTarget: drawerActionForm("checkpoint") }, "checkpoint", h.app.context.ticket);
+  const updatedA = { ...h.app.context.ticket, revision: 2, checkpoint: "Avance de A" };
+  h.transport.respond(0, { result: updatedA, state: state("a", "checkpoint-a", [updatedA]) });
+  await waitForCalls(h.transport, 2);
+  assert.equal(h.transport.calls[1].url, "/api/tickets/T-1/context");
+  const fresh = contextForTicket("T-1", "A refrescada", "in_progress");
+  fresh.ticket.revision = 2;
+  fresh.ticket.checkpoint = "Avance de A";
+  h.transport.respond(1, fresh);
+  await pending;
+  assert.equal(h.app.context.ticket.title, "A refrescada");
+  assert.equal(h.app.drawerDirty, false);
+  assert.equal(h.app.state.marker, "checkpoint-a");
+}
+
+async function submitCannotOverwriteReopenedSameTicket() {
+  const h = loadHarness();
+  h.app.selectedId = "T-1";
+  h.app.context = contextForTicket("T-1", "Entrega A", "in_progress");
+  const pending = h.submitActionForm({ preventDefault() {}, currentTarget: drawerActionForm("submit") }, "submit", h.app.context.ticket);
+
+  h.closeTicket();
+  h.openTicket("T-1");
+  const reopened = contextForTicket("T-1", "A reabierta mientras entrega", "in_progress");
+  h.transport.respond(1, reopened);
+  await new Promise((resolve) => setImmediate(resolve));
+  const summary = findElement(h.byId("drawer-body"), (element) => element.name === "summary");
+  summary.value = "Edición de la nueva instancia";
+  h.app.drawerDirty = true;
+
+  const submittedA = { ...reopened.ticket, revision: 2, status: "review" };
+  h.transport.respond(0, { result: submittedA, state: state("a", "submit-a", [submittedA]) });
+  await pending;
+  assert.equal(h.transport.calls.length, 2, "submit antiguo recargó A reabierta");
+  assert.equal(findElement(h.byId("drawer-body"), (element) => element.name === "summary"), summary);
+  assert.equal(summary.value, "Edición de la nueva instancia");
+  assert.equal(h.app.drawerDirty, true);
+  assert.equal(h.app.state.marker, "submit-a");
+}
+
+async function commentConflictCannotOverwriteEditedDrawerB() {
+  const h = loadHarness();
+  h.app.selectedId = "T-1";
+  h.app.context = contextForTicket("T-1", "Comentario A", "review");
+  const pending = h.submitActionForm({ preventDefault() {}, currentTarget: drawerActionForm("comment") }, "comment", h.app.context.ticket);
+
+  h.openTicket("T-2");
+  const contextB = contextForTicket("T-2", "Comentario B", "review", NEW_TOKEN);
+  h.transport.respond(1, contextB);
+  await new Promise((resolve) => setImmediate(resolve));
+  const bodyB = findElement(h.byId("drawer-body"), (element) => element.name === "body");
+  bodyB.value = "Comentario B sin guardar";
+  h.app.drawerDirty = true;
+
+  h.transport.respond(0, { error: "revision conflict for T-1: expected 1, current 2" }, 409);
+  await pending;
+  assert.equal(h.transport.calls.length, 2, "conflicto comment A inició recarga sobre B");
+  assert.equal(findElement(h.byId("drawer-body"), (element) => element.name === "body"), bodyB);
+  assert.equal(bodyB.value, "Comentario B sin guardar");
+  assert.equal(h.app.drawerDirty, true);
+  assert.equal(h.app.state.marker, "initial", "un conflicto sin estado confirmado alteró el tablero");
+}
+
+async function conflictStateReloadCannotFollowNewDrawer() {
+  const h = loadHarness();
+  h.app.selectedId = "T-1";
+  h.app.context = contextForTicket("T-1", "Comentario A", "review");
+  const pending = h.submitActionForm({ preventDefault() {}, currentTarget: drawerActionForm("comment") }, "comment", h.app.context.ticket);
+
+  h.transport.respond(0, { error: "revision conflict for T-1: expected 1, current 2" }, 409);
+  await waitForCalls(h.transport, 2);
+  assert.equal(h.transport.calls[1].url, "/api/state", "el conflicto no inició su recarga de estado esperada");
+
+  h.openTicket("T-2");
+  const contextB = contextForTicket("T-2", "Drawer B durante state GET", "review", NEW_TOKEN);
+  h.transport.respond(2, contextB);
+  await new Promise((resolve) => setImmediate(resolve));
+  const verificationB = findElement(h.byId("drawer-body"), (element) => element.name === "verification");
+  const renderedContextB = h.app.context;
+
+  const newerB = { ...contextB.ticket, revision: 2 };
+  h.transport.respond(1, state("a", "conflict-refresh", [newerB]));
+  await waitForCalls(h.transport, 4);
+  if (h.transport.calls[3]) {
+    const unexpectedRefresh = contextForTicket("T-2", "B refrescada indebidamente", "review", NEW_TOKEN);
+    unexpectedRefresh.ticket.revision = 2;
+    h.transport.respond(3, unexpectedRefresh);
+  }
+  await pending;
+  assert.equal(h.transport.calls.length, 3, "la recarga de estado de A siguió con un GET de contexto para B");
+  assert.equal(h.app.context, renderedContextB);
+  assert.equal(findElement(h.byId("drawer-body"), (element) => element.name === "verification"), verificationB);
+  assert.equal(h.app.state.marker, "conflict-refresh", "la recarga confirmada no actualizó el tablero");
+}
+
+async function startRunCannotOverwriteEditedDrawerB() {
+  const h = loadHarness();
+  const queuedA = contextForTicket("T-1", "Ejecución A", "queued");
+  queuedA.ticket.ready = true;
+  h.app.selectedId = "T-1";
+  h.app.context = queuedA;
+  h.app.state = state("a", "initial", [queuedA.ticket]);
+  h.app.state.execution = {
+    enabled: true,
+    workers: [{ id: "worker-1", name: "Worker local", model: "fixture", effort: "low", profile_ids: [], timeout_seconds: 30 }],
+    runs: []
+  };
+  h.renderDrawer();
+  const executionForm = findElement(h.byId("drawer-body"), (element) => element.className.includes("execution-form"));
+  assert.ok(executionForm, "no se renderizó el formulario real de ejecución");
+  const pending = executionForm.dispatch("submit", { preventDefault() {} });
+  assert.equal(h.transport.calls.length, 1);
+
+  h.openTicket("T-2");
+  const contextB = contextForTicket("T-2", "Drawer B durante start", "review", NEW_TOKEN);
+  h.transport.respond(1, contextB);
+  await new Promise((resolve) => setImmediate(resolve));
+  const verificationB = findElement(h.byId("drawer-body"), (element) => element.name === "verification");
+  verificationB.value = "Verificación B sin guardar";
+  h.app.drawerDirty = true;
+
+  const runningA = { ...queuedA.ticket, revision: 2, status: "in_progress", assignee: "agent:worker-1" };
+  const nextState = state("a", "start-a", [runningA, contextB.ticket]);
+  nextState.execution = { ...h.app.state.execution, runs: [{ id: "run-1", ticket_id: "T-1", status: "running" }] };
+  h.transport.respond(0, { result: { id: "run-1" }, state: nextState });
+  await pending;
+  assert.equal(h.transport.calls.length, 2, "start_run A forzó una recarga de B");
+  assert.equal(findElement(h.byId("drawer-body"), (element) => element.name === "verification"), verificationB);
+  assert.equal(verificationB.value, "Verificación B sin guardar");
+  assert.equal(h.app.drawerDirty, true);
+  assert.equal(h.app.state.marker, "start-a");
+}
+
 const tests = [
   ["GET antiguo no sobrescribe una mutación", oldGetCannotOverwriteMutation],
   ["cerrar y reabrir descarta contexto antiguo", closeAndReopenRejectsOldContext],
@@ -706,7 +897,13 @@ const tests = [
   ["la revisión muestra relaciones y source checks cubiertos", renderedReviewShowsCoveredMaterial],
   ["el éxito de A no sobrescribe el drawer B", completionSuccessCannotOverwriteAnotherDrawer],
   ["el 409 de A no instala borrador en B", completion409CannotInstallDraftInAnotherDrawer],
-  ["una completión antigua no sobrescribe A reabierta", completionCannotOverwriteReopenedSameTicket]
+  ["una completión antigua no sobrescribe A reabierta", completionCannotOverwriteReopenedSameTicket],
+  ["guardar A no sobrescribe controles editados de B", updateSaveCannotOverwriteEditedDrawerB],
+  ["checkpoint actual refresca su drawer original", checkpointStillRefreshesItsOriginalDrawer],
+  ["submit antiguo no sobrescribe A reabierta", submitCannotOverwriteReopenedSameTicket],
+  ["conflicto comment A no sobrescribe controles de B", commentConflictCannotOverwriteEditedDrawerB],
+  ["recarga de conflicto A no sigue al drawer B", conflictStateReloadCannotFollowNewDrawer],
+  ["start_run A no sobrescribe controles de B", startRunCannotOverwriteEditedDrawerB]
 ];
 
 (async () => {
