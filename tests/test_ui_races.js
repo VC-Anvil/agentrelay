@@ -66,11 +66,19 @@ class FakeElement {
     this.listeners = new Map();
     this._fallbackLastChild = { textContent: "" };
   }
-  append(...items) { this.children.push(...items); }
-  replaceChildren(...items) { this.children = [...items]; }
+  append(...items) {
+    items.forEach((item) => { if (item && typeof item === "object") item.parentNode = this; });
+    this.children.push(...items);
+  }
+  replaceChildren(...items) {
+    this.children.forEach((item) => { if (item && item.parentNode === this) item.parentNode = null; });
+    this.children = [];
+    this.append(...items);
+  }
   get lastChild() { return this.children.at(-1) || this._fallbackLastChild; }
   setAttribute(name, value) { this.attributes.set(name, String(value)); }
   getAttribute(name) { return this.attributes.get(name) ?? null; }
+  removeAttribute(name) { this.attributes.delete(name); }
   addEventListener(name, listener) {
     if (!this.listeners.has(name)) this.listeners.set(name, []);
     this.listeners.get(name).push(listener);
@@ -78,14 +86,42 @@ class FakeElement {
   async dispatch(name, event = {}) {
     for (const listener of this.listeners.get(name) || []) await listener({ currentTarget: this, target: this, ...event });
   }
-  remove() {}
+  remove() {
+    if (!this.parentNode) return;
+    this.parentNode.children = this.parentNode.children.filter((item) => item !== this);
+    this.parentNode = null;
+  }
   reset() { this.value = ""; }
   close() { this.open = false; }
   showModal() { this.open = true; }
   focus() {}
   closest() { return null; }
-  querySelector() { return null; }
-  querySelectorAll() { return []; }
+  matches(selector) {
+    const value = selector.trim();
+    if (/^[a-z]+$/i.test(value)) return this.tagName === value.toUpperCase();
+    const data = value.match(/^\[data-([a-z0-9-]+)\]$/i);
+    if (data) {
+      const key = data[1].replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+      return Object.prototype.hasOwnProperty.call(this.dataset, key);
+    }
+    return false;
+  }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+  querySelectorAll(selector) {
+    const selectors = selector.split(",").map((item) => item.trim());
+    const matches = [];
+    const visit = (element) => {
+      for (const child of element.children || []) {
+        if (selectors.some((item) => child.matches?.(item))) matches.push(child);
+        visit(child);
+      }
+    };
+    visit(this);
+    return matches;
+  }
+  contains(candidate) {
+    return candidate === this || this.children.some((child) => child?.contains?.(candidate));
+  }
 }
 
 class FakeHeaders {
@@ -105,7 +141,16 @@ class FakeHeaders {
 }
 
 class FakeFormData {
-  constructor(form) { this.values = form.formValues || new Map(); }
+  constructor(form) {
+    this.values = new Map(form.formValues || []);
+    const controls = form.querySelectorAll?.("input, textarea, select, button") || [];
+    if (controls.length) {
+      for (const name of this.values.keys()) {
+        const named = controls.filter((control) => control.name === name);
+        if (named.length && named.every((control) => control.disabled)) this.values.delete(name);
+      }
+    }
+  }
   get(name) {
     const value = this.values.get(name);
     return Array.isArray(value) ? (value[0] ?? null) : (value ?? null);
@@ -287,6 +332,22 @@ function drawerActionForm(action) {
   };
   form.formValues = new Map(fields[action]);
   return form;
+}
+
+function definitionValues(title = "Título enviado") {
+  return new Map([
+    ["title", title], ["description", "Descripción"], ["type", "task"],
+    ["priority", "normal"], ["parent_id", ""], ["profile_id", ""],
+    ["depends_on", ""], ["acceptance", "Criterio A\nCriterio B"]
+  ]);
+}
+
+function actionForm(body, action) {
+  return findElement(body, (element) => element.dataset.actionPanel === action);
+}
+
+function editableControls(body) {
+  return body.querySelectorAll("input, textarea, select, button");
 }
 
 function contextForTicket(id, title, status, token = OLD_TOKEN) {
@@ -861,6 +922,7 @@ async function startRunCannotOverwriteEditedDrawerB() {
   assert.ok(executionForm, "no se renderizó el formulario real de ejecución");
   const pending = executionForm.dispatch("submit", { preventDefault() {} });
   assert.equal(h.transport.calls.length, 1);
+  assert.equal(JSON.parse(h.transport.calls[0].options.body).data.worker_id, "worker-1", "start_run leyó el worker después de deshabilitarlo");
 
   h.openTicket("T-2");
   const contextB = contextForTicket("T-2", "Drawer B durante start", "review", NEW_TOKEN);
@@ -880,6 +942,380 @@ async function startRunCannotOverwriteEditedDrawerB() {
   assert.equal(verificationB.value, "Verificación B sin guardar");
   assert.equal(h.app.drawerDirty, true);
   assert.equal(h.app.state.marker, "start-a");
+}
+
+async function definitionLocksAfterCapturingPayloadUntilContextArrives() {
+  const h = loadHarness();
+  const contextA = contextForTicket("T-1", "Título inicial", "in_progress");
+  h.app.selectedId = "T-1";
+  h.app.context = contextA;
+  h.app.state = state("a", "initial", [contextA.ticket]);
+  h.renderDrawer();
+  const body = h.byId("drawer-body");
+  const form = findElement(body, (element) => element.dataset.form === "edit-ticket");
+  form.formValues = definitionValues("V1 enviada");
+  const originalControls = editableControls(body);
+
+  const pending = form.dispatch("submit", { preventDefault() {} });
+  assert.equal(h.transport.calls.length, 1, "Guardar no emitió el POST");
+  const sent = JSON.parse(h.transport.calls[0].options.body);
+  assert.equal(sent.data.title, "V1 enviada", "FormData no se capturó antes del bloqueo");
+  assert.ok(originalControls.length > 5, "el harness no encontró los controles reales del drawer");
+  assert.ok(originalControls.every((control) => control.disabled), "quedaron controles editables durante el POST");
+  assert.equal(new FakeFormData(form).get("title"), null, "el adaptador FormData incluyó un control ya deshabilitado");
+  assert.equal(h.byId("ticket-drawer").getAttribute("aria-busy"), "true");
+
+  const updated = { ...contextA.ticket, title: "V1 enviada", revision: 2 };
+  h.transport.respond(0, { result: updated, state: state("a", "saved", [updated]) });
+  await waitForCalls(h.transport, 2);
+  assert.ok(originalControls.every((control) => control.disabled), "se habilitaron controles durante el GET de contexto");
+  assert.equal(h.byId("ticket-drawer").getAttribute("aria-busy"), "true");
+
+  const fresh = contextForTicket("T-1", "V1 enviada", "in_progress");
+  fresh.ticket.revision = 2;
+  h.transport.respond(1, fresh);
+  await pending;
+  const finalTitle = findElement(body, (element) => element.name === "title");
+  assert.equal(finalTitle.value, "V1 enviada");
+  assert.equal(finalTitle.disabled, false);
+  assert.equal(h.byId("ticket-drawer").getAttribute("aria-busy"), null);
+  assert.equal(h.app.drawerDirty, false);
+}
+
+async function checkpointLocksRealControlsAfterPayloadCapture() {
+  const h = loadHarness();
+  const contextA = contextForTicket("T-1", "Avance A", "in_progress");
+  h.app.selectedId = "T-1";
+  h.app.context = contextA;
+  h.app.state = state("a", "initial", [contextA.ticket]);
+  h.renderDrawer();
+  const body = h.byId("drawer-body");
+  const form = actionForm(body, "checkpoint");
+  form.formValues = new Map([["checkpoint", "V1 avance"]]);
+  const checkpointControl = findElement(form, (element) => element.name === "checkpoint");
+  const pending = form.dispatch("submit", { preventDefault() {} });
+  assert.equal(JSON.parse(h.transport.calls[0].options.body).data.checkpoint, "V1 avance");
+  assert.equal(checkpointControl.disabled, true);
+
+  const updated = { ...contextA.ticket, checkpoint: "V1 avance", revision: 2 };
+  h.transport.respond(0, { result: updated, state: state("a", "checkpoint", [updated]) });
+  await waitForCalls(h.transport, 2);
+  assert.equal(checkpointControl.disabled, true);
+  const fresh = contextForTicket("T-1", "Avance A", "in_progress");
+  fresh.ticket.checkpoint = "V1 avance";
+  fresh.ticket.revision = 2;
+  h.transport.respond(1, fresh);
+  await pending;
+  assert.equal(findElement(body, (element) => element.name === "checkpoint").value, "V1 avance");
+  assert.equal(h.byId("ticket-drawer").getAttribute("aria-busy"), null);
+}
+
+async function knownRejectionRestoresValuesAndPriorRestrictions() {
+  const h = loadHarness();
+  const contextA = contextForTicket("T-1", "Revisión heredada", "review", null);
+  h.app.selectedId = "T-1";
+  h.app.context = contextA;
+  h.app.state = state("a", "initial", [contextA.ticket]);
+  h.renderDrawer();
+  const body = h.byId("drawer-body");
+  const completion = actionForm(body, "complete");
+  const completionSubmit = findElement(completion, (element) => element.type === "submit");
+  assert.equal(completionSubmit.disabled, true, "la aceptación sin token empezó habilitada");
+  const comment = actionForm(body, "comment");
+  const commentBody = findElement(comment, (element) => element.name === "body");
+  const commentSubmit = findElement(comment, (element) => element.type === "submit");
+  commentBody.value = "Texto rechazado";
+  comment.formValues = new Map([["body", "Texto rechazado"]]);
+
+  const pending = comment.dispatch("submit", { preventDefault() {} });
+  assert.equal(commentBody.disabled, true);
+  assert.equal(commentSubmit.disabled, true);
+  h.transport.respond(0, { error: "comentario rechazado" }, 400);
+  await pending;
+  assert.equal(findElement(body, (element) => element.name === "body"), commentBody, "el rechazo reconstruyó el formulario");
+  assert.equal(commentBody.value, "Texto rechazado");
+  assert.equal(commentBody.disabled, false);
+  assert.equal(commentSubmit.disabled, false);
+  assert.equal(completionSubmit.disabled, true, "el rechazo habilitó una aceptación inválida");
+  assert.equal(h.app.drawerDirty, true);
+  assert.equal(h.byId("ticket-drawer").getAttribute("aria-busy"), null);
+}
+
+async function revisionConflictKeepsRejectedFormThroughStateReload() {
+  const h = loadHarness();
+  const contextA = contextForTicket("T-1", "Comentario A", "review", NEW_TOKEN);
+  h.app.selectedId = "T-1";
+  h.app.context = contextA;
+  h.app.state = state("a", "initial", [contextA.ticket]);
+  h.renderDrawer();
+  const body = h.byId("drawer-body");
+  const comment = actionForm(body, "comment");
+  const commentBody = findElement(comment, (element) => element.name === "body");
+  commentBody.value = "Comentario V1";
+  comment.formValues = new Map([["body", "Comentario V1"]]);
+  const pending = comment.dispatch("submit", { preventDefault() {} });
+
+  h.transport.respond(0, { error: "revision conflict for T-1: expected 1, current 2" }, 409);
+  await waitForCalls(h.transport, 2);
+  assert.equal(h.transport.calls[1].url, "/api/state");
+  assert.equal(commentBody.disabled, true, "el conflicto habilitó el formulario antes del reload de estado");
+  const newer = { ...contextA.ticket, revision: 2 };
+  h.transport.respond(1, state("a", "conflict", [newer]));
+  await pending;
+  assert.equal(findElement(body, (element) => element.name === "body"), commentBody);
+  assert.equal(commentBody.value, "Comentario V1");
+  assert.equal(commentBody.disabled, false);
+  assert.equal(h.app.context.ticket.revision, 1, "el reload sustituyó el contexto rechazado");
+  assert.equal(h.app.state.tickets[0].revision, 2, "el tablero no adoptó la revisión confirmada");
+  assert.equal(h.app.drawerDirty, true);
+}
+
+async function completionConflictStaysLockedUntilFreshContext() {
+  const h = loadHarness();
+  const contextA = reviewContext("a", OLD_TOKEN);
+  h.app.selectedId = "T-1";
+  h.app.context = contextA;
+  h.app.state = state("a", "initial", [contextA.ticket]);
+  h.renderDrawer();
+  const body = h.byId("drawer-body");
+  const complete = actionForm(body, "complete");
+  complete.formValues = new Map([
+    ["verification", "Verificación V1"],
+    ["accepted_criteria", ["Criterio A", "Criterio B"]]
+  ]);
+  const oldVerification = findElement(complete, (element) => element.name === "verification");
+  const pending = complete.dispatch("submit", { preventDefault() {} });
+  assert.equal(oldVerification.disabled, true);
+  h.transport.respond(0, { error: "acceptance context changed; reread ticket context before completing" }, 409);
+  await waitForCalls(h.transport, 2);
+  assert.equal(oldVerification.disabled, true, "el 409 habilitó la revisión durante su GET");
+  const fresh = reviewContext("a", NEW_TOKEN);
+  fresh.ticket.revision = 2;
+  h.transport.respond(1, fresh);
+  await pending;
+
+  const currentComplete = actionForm(body, "complete");
+  const confirmation = findElement(currentComplete, (element) => element.name === "confirm_updated_context");
+  const submit = findElement(currentComplete, (element) => element.type === "submit");
+  assert.ok(confirmation, "el contexto nuevo no exige reconfirmación");
+  assert.equal(submit.disabled, true, "la aceptación se habilitó antes de reconfirmar");
+  assert.equal(h.byId("ticket-drawer").getAttribute("aria-busy"), null);
+}
+
+async function confirmedPostFailedContextAllowsOnlyReadRetry() {
+  const h = loadHarness();
+  const contextA = contextForTicket("T-1", "Padre", "in_progress");
+  h.app.selectedId = "T-1";
+  h.app.context = contextA;
+  h.app.state = state("a", "initial", [contextA.ticket]);
+  h.renderDrawer();
+  const body = h.byId("drawer-body");
+  const child = actionForm(body, "child");
+  child.formValues = new Map([
+    ["title", "Hija única"], ["description", "Descripción"], ["acceptance", "Criterio hija"]
+  ]);
+  const childTitle = findElement(child, (element) => element.name === "title");
+  const childSubmit = findElement(child, (element) => element.type === "submit");
+  childTitle.value = "Hija única";
+  const pending = child.dispatch("submit", { preventDefault() {} });
+  const created = { ...ticket("Hija única"), id: "T-2", parent_id: "T-1", status: "queued" };
+  h.transport.respond(0, { result: created, state: state("a", "child-created", [contextA.ticket, created]) });
+  await waitForCalls(h.transport, 2);
+  h.transport.calls[1].reject(new Error("context offline"));
+  await pending;
+
+  assert.equal(childTitle.value, "Hija única", "el control real no conservó el texto del formulario");
+  assert.equal(childTitle.disabled, false, "el texto confirmado no quedó disponible para copiar");
+  assert.equal(childTitle.readOnly, true, "el formulario confirmado permite editar antes de leer contexto");
+  assert.equal(childSubmit.disabled, true, "la hija confirmada se puede duplicar");
+  assert.equal(h.app.drawerDirty, true);
+  assert.equal(h.byId("ticket-drawer").getAttribute("aria-busy"), null, "la recuperación ociosa quedó marcada como ocupada");
+  const notice = findElement(body, (element) => element.dataset.drawerMutationNotice === "true");
+  assert.match(treeText(notice), /Acción guardada/);
+  const retry = findElement(notice, (element) => element.tagName === "BUTTON");
+  const retrying = retry.dispatch("click");
+  assert.equal(h.transport.calls.length, 3);
+  assert.equal(h.byId("ticket-drawer").getAttribute("aria-busy"), "true", "el GET de retry no marcó busy");
+  assert.equal(h.transport.calls[2].options.method, undefined, "el retry repitió la mutación");
+  h.transport.calls[2].reject(new Error("still offline"));
+  await retrying;
+  assert.equal(h.byId("ticket-drawer").getAttribute("aria-busy"), null, "un retry fallido dejó busy activo");
+  assert.equal(retry.disabled, false, "un retry de lectura fallido no se puede volver a intentar");
+  const retryingAgain = retry.dispatch("click");
+  assert.equal(h.transport.calls.length, 4);
+  const fresh = contextForTicket("T-1", "Padre actualizado", "in_progress");
+  h.transport.respond(3, fresh);
+  await retryingAgain;
+  assert.equal(h.transport.calls.filter((call) => call.options.method === "POST").length, 1);
+  assert.equal(h.byId("ticket-drawer").getAttribute("aria-busy"), null);
+  assert.equal(findElement(body, (element) => element.name === "title").disabled, false);
+}
+
+async function uncertainPostRequiresReadWithoutClaimingOutcome() {
+  const h = loadHarness();
+  const contextA = contextForTicket("T-1", "Título inicial", "in_progress");
+  h.app.selectedId = "T-1";
+  h.app.context = contextA;
+  h.app.state = state("a", "initial", [contextA.ticket]);
+  h.renderDrawer();
+  const body = h.byId("drawer-body");
+  const edit = findElement(body, (element) => element.dataset.form === "edit-ticket");
+  edit.formValues = definitionValues("Resultado incierto");
+  const titleControl = findElement(edit, (element) => element.name === "title");
+  titleControl.value = "Resultado incierto";
+  const pending = edit.dispatch("submit", { preventDefault() {} });
+  h.transport.calls[0].reject(new Error("network lost"));
+  await pending;
+
+  const notice = findElement(body, (element) => element.dataset.drawerMutationNotice === "true");
+  assert.match(treeText(notice), /Resultado sin confirmar/);
+  assert.equal(titleControl.value, "Resultado incierto");
+  assert.equal(titleControl.readOnly, true);
+  assert.equal(findElement(edit, (element) => element.type === "submit").disabled, true);
+  assert.equal(h.transport.calls.length, 1, "el fallo de red provocó un retry automático");
+  assert.equal(h.byId("ticket-drawer").getAttribute("aria-busy"), null, "la recuperación incierta ociosa quedó marcada como ocupada");
+
+  const retry = findElement(notice, (element) => element.tagName === "BUTTON");
+  const retrying = retry.dispatch("click");
+  assert.equal(h.transport.calls.length, 2);
+  assert.equal(h.byId("ticket-drawer").getAttribute("aria-busy"), "true");
+  h.transport.respond(1, contextA);
+  await retrying;
+  assert.equal(h.transport.calls.filter((call) => call.options.method === "POST").length, 1);
+  assert.match(treeText(h.byId("toast-region")), /sigue con resultado incierto/);
+  const warning = findElement(h.byId("drawer-body"), (element) => element.dataset.uncertainMutation === "true");
+  assert.match(treeText(warning), /auditoría antes de repetirla/);
+  const poll = h.loadState({ quiet: true });
+  assert.equal(h.transport.calls.length, 3);
+  const newer = { ...contextA.ticket, revision: 2, title: "Contexto posterior" };
+  h.transport.respond(2, state("a", "later-poll", [newer]));
+  await waitForCalls(h.transport, 4);
+  const laterContext = contextForTicket("T-1", "Contexto posterior", "in_progress");
+  laterContext.ticket.revision = 2;
+  h.transport.respond(3, laterContext);
+  await poll;
+  const warningAfterPoll = findElement(h.byId("drawer-body"), (element) => element.dataset.uncertainMutation === "true");
+  assert.match(treeText(warningAfterPoll), /resultado incierto/);
+  assert.match(treeText(warningAfterPoll), /lectura posterior no demuestra/);
+  assert.equal(h.transport.calls.filter((call) => call.options.method === "POST").length, 1);
+}
+
+async function serverErrorAfterPostIsAlsoUncertain() {
+  const h = loadHarness();
+  const contextA = contextForTicket("T-1", "Título inicial", "in_progress");
+  h.app.selectedId = "T-1";
+  h.app.context = contextA;
+  h.app.state = state("a", "initial", [contextA.ticket]);
+  h.renderDrawer();
+  const body = h.byId("drawer-body");
+  const edit = findElement(body, (element) => element.dataset.form === "edit-ticket");
+  edit.formValues = definitionValues("Posible commit con 500");
+  const titleControl = findElement(edit, (element) => element.name === "title");
+  titleControl.value = "Posible commit con 500";
+  const pending = edit.dispatch("submit", { preventDefault() {} });
+  h.transport.respond(0, { error: "falló la captura de estado posterior" }, 500);
+  await pending;
+
+  const notice = findElement(body, (element) => element.dataset.drawerMutationNotice === "true");
+  assert.match(treeText(notice), /Resultado sin confirmar/);
+  assert.equal(titleControl.value, "Posible commit con 500");
+  assert.equal(titleControl.readOnly, true);
+  assert.equal(findElement(edit, (element) => element.type === "submit").disabled, true);
+  assert.equal(h.byId("ticket-drawer").getAttribute("aria-busy"), null);
+  assert.equal(h.transport.calls.length, 1, "el 500 provocó un retry automático");
+}
+
+async function pendingMutationDoesNotLockNewDrawerInstance() {
+  const h = loadHarness();
+  const contextA = contextForTicket("T-1", "A", "in_progress");
+  h.app.selectedId = "T-1";
+  h.app.context = contextA;
+  h.app.state = state("a", "initial", [contextA.ticket]);
+  h.renderDrawer();
+  const checkpoint = actionForm(h.byId("drawer-body"), "checkpoint");
+  checkpoint.formValues = new Map([["checkpoint", "Pendiente A"]]);
+  const pending = checkpoint.dispatch("submit", { preventDefault() {} });
+  assert.equal(h.byId("ticket-drawer").getAttribute("aria-busy"), "true");
+
+  h.openTicket("T-2");
+  assert.equal(h.byId("ticket-drawer").getAttribute("aria-busy"), null, "B heredó aria-busy de A");
+  const contextB = contextForTicket("T-2", "B", "review", NEW_TOKEN);
+  h.transport.respond(1, contextB);
+  await new Promise((resolve) => setImmediate(resolve));
+  const verificationB = findElement(h.byId("drawer-body"), (element) => element.name === "verification");
+  assert.equal(verificationB.disabled, false, "B heredó controles bloqueados de A");
+  verificationB.value = "Edición B";
+  h.app.drawerDirty = true;
+
+  const updatedA = { ...contextA.ticket, checkpoint: "Pendiente A", revision: 2 };
+  h.transport.respond(0, { result: updatedA, state: state("a", "checkpoint-a", [updatedA, contextB.ticket]) });
+  await pending;
+  assert.equal(findElement(h.byId("drawer-body"), (element) => element.name === "verification"), verificationB);
+  assert.equal(verificationB.value, "Edición B");
+  assert.equal(verificationB.disabled, false);
+  assert.equal(h.app.drawerDirty, true);
+  assert.equal(h.byId("ticket-drawer").getAttribute("aria-busy"), null);
+}
+
+async function pendingMutationDoesNotLockReopenedSameTicket() {
+  const h = loadHarness();
+  const contextA = contextForTicket("T-1", "A inicial", "in_progress");
+  h.app.selectedId = "T-1";
+  h.app.context = contextA;
+  h.app.state = state("a", "initial", [contextA.ticket]);
+  h.renderDrawer();
+  const originalForm = findElement(h.byId("drawer-body"), (element) => element.dataset.form === "edit-ticket");
+  originalForm.formValues = definitionValues("A V1");
+  const pending = originalForm.dispatch("submit", { preventDefault() {} });
+  assert.equal(h.byId("ticket-drawer").getAttribute("aria-busy"), "true");
+
+  h.closeTicket();
+  h.openTicket("T-1");
+  assert.equal(h.byId("ticket-drawer").getAttribute("aria-busy"), null, "A reabierta heredó aria-busy");
+  const reopened = contextForTicket("T-1", "A reabierta", "in_progress");
+  h.transport.respond(1, reopened);
+  await new Promise((resolve) => setImmediate(resolve));
+  const reopenedTitle = findElement(h.byId("drawer-body"), (element) => element.name === "title");
+  assert.equal(reopenedTitle.disabled, false);
+  reopenedTitle.value = "V2 de la nueva instancia";
+  h.app.drawerDirty = true;
+
+  const updated = { ...contextA.ticket, title: "A V1", revision: 2 };
+  h.transport.respond(0, { result: updated, state: state("a", "saved-old-a", [updated]) });
+  await pending;
+  assert.equal(findElement(h.byId("drawer-body"), (element) => element.name === "title"), reopenedTitle);
+  assert.equal(reopenedTitle.value, "V2 de la nueva instancia");
+  assert.equal(reopenedTitle.disabled, false);
+  assert.equal(h.app.drawerDirty, true);
+  assert.equal(h.byId("ticket-drawer").getAttribute("aria-busy"), null);
+}
+
+async function previouslyDisabledExecutionControlsStayDisabledAfterError() {
+  const h = loadHarness();
+  const contextA = contextForTicket("T-1", "Lista con run activo", "queued");
+  contextA.ticket.ready = true;
+  h.app.selectedId = "T-1";
+  h.app.context = contextA;
+  h.app.state = state("a", "initial", [contextA.ticket]);
+  h.app.state.execution = {
+    enabled: true,
+    workers: [{ id: "worker-1", name: "Worker", model: "fixture", effort: "low", profile_ids: [] }],
+    runs: [{ id: "run-active", ticket_id: "T-9", status: "running" }]
+  };
+  h.renderDrawer();
+  const body = h.byId("drawer-body");
+  const execution = findElement(body, (element) => element.className.includes("execution-form"));
+  const start = findElement(execution, (element) => element.type === "submit");
+  const worker = findElement(execution, (element) => element.name === "worker_id");
+  assert.equal(start.disabled, true);
+  assert.equal(worker.disabled, true);
+  const comment = actionForm(body, "comment");
+  comment.formValues = new Map([["body", "Rechazo"]]);
+  const pending = comment.dispatch("submit", { preventDefault() {} });
+  h.transport.respond(0, { error: "rechazado" }, 400);
+  await pending;
+  assert.equal(start.disabled, true, "se habilitó start_run previamente bloqueado");
+  assert.equal(worker.disabled, true, "se habilitó worker previamente bloqueado");
 }
 
 const tests = [
@@ -903,7 +1339,18 @@ const tests = [
   ["submit antiguo no sobrescribe A reabierta", submitCannotOverwriteReopenedSameTicket],
   ["conflicto comment A no sobrescribe controles de B", commentConflictCannotOverwriteEditedDrawerB],
   ["recarga de conflicto A no sigue al drawer B", conflictStateReloadCannotFollowNewDrawer],
-  ["start_run A no sobrescribe controles de B", startRunCannotOverwriteEditedDrawerB]
+  ["start_run A no sobrescribe controles de B", startRunCannotOverwriteEditedDrawerB],
+  ["guardar bloquea tras capturar payload hasta recibir contexto", definitionLocksAfterCapturingPayloadUntilContextArrives],
+  ["checkpoint bloquea controles reales tras capturar payload", checkpointLocksRealControlsAfterPayloadCapture],
+  ["rechazo conocido restaura valores y restricciones previas", knownRejectionRestoresValuesAndPriorRestrictions],
+  ["conflicto conserva formulario durante reload de estado", revisionConflictKeepsRejectedFormThroughStateReload],
+  ["409 de aceptación bloquea hasta contexto nuevo", completionConflictStaysLockedUntilFreshContext],
+  ["POST confirmado y GET fallido permite sólo retry de lectura", confirmedPostFailedContextAllowsOnlyReadRetry],
+  ["POST incierto exige lectura sin afirmar resultado", uncertainPostRequiresReadWithoutClaimingOutcome],
+  ["un error 500 tras el POST también queda incierto", serverErrorAfterPostIsAlsoUncertain],
+  ["mutación pendiente no bloquea nueva instancia de drawer", pendingMutationDoesNotLockNewDrawerInstance],
+  ["mutación pendiente no bloquea el mismo ticket reabierto", pendingMutationDoesNotLockReopenedSameTicket],
+  ["error conserva controles de ejecución previamente bloqueados", previouslyDisabledExecutionControlsStayDisabledAfterError]
 ];
 
 (async () => {

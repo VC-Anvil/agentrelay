@@ -56,6 +56,7 @@ database and backup let you inspect what happened. See the
 - Agent profiles with role, provider, model, recommended effort, capabilities and quality/speed preference.
 - Atomic claiming and optimistic revisions: two writers cannot silently overwrite the same ticket.
 - Drawer forms keep their own editing context when another ticket's pending action finishes. [Validation and limits](docs/VALIDATION_DRAWER_ISOLATION.md).
+- Pending drawer actions temporarily lock editing; failed refreshes recover by reading context without repeating a confirmed action. [Behavior and validation](docs/VALIDATION_PENDING_DRAWER.md).
 - Checkpoints, comments, help requests and task splitting with preserved history.
 - Independent review with evidence references and explicit acceptance; cyclic dependency/hierarchy combinations are rejected.
 - Required acceptance-context tokens detect differences in immediate review context at acceptance. Version 0.18 changes the completion contract; [migration and limits](docs/ACCEPTANCE_CONTEXT.md).

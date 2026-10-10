@@ -182,6 +182,7 @@ class Handler(BaseHTTPRequestHandler):
         if urlsplit(self.path).path != "/api/actions":
             self._reject_unread(404, "No encontrado.")
             return
+        action_finished = False
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0 or length > MAX_BODY:
@@ -209,11 +210,20 @@ class Handler(BaseHTTPRequestHandler):
                     result = workspace.execution.cancel(data["run_id"])
             else:
                 result = workspace.store.action(action, data, actor="human")
+            action_finished = True
             self._json(200, {"result": result, "state": self.server.snapshot(workspace.id)})
-        except (ValueError, UnicodeError) as exc:
-            self._json(400, {"error": "JSON o longitud de petición inválidos."})
+        except (ValueError, UnicodeError):
+            if action_finished:
+                logging.exception("POST response failed after action completed")
+                self._json(500, {"error": "Error interno. Revisa el registro local."})
+            else:
+                self._json(400, {"error": "JSON o longitud de petición inválidos."})
         except DomainError as exc:
-            self._json(exc.status, {"error": str(exc)})
+            if action_finished:
+                logging.exception("POST response failed after action completed")
+                self._json(500, {"error": "Error interno. Revisa el registro local."})
+            else:
+                self._json(exc.status, {"error": str(exc)})
         except Exception:
             logging.exception("POST failed")
             self._json(500, {"error": "Error interno. Revisa el registro local."})

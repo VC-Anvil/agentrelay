@@ -72,6 +72,8 @@
     reviewDraft: null,
     drawerEpoch: 0,
     drawerDirty: false,
+    drawerMutation: null,
+    uncertainDrawerWarning: null,
     dialogDirty: false,
     loadingEpoch: null,
     mutationCount: 0
@@ -100,6 +102,124 @@
   const isCurrentWorkspace = (scope) => Boolean(scope && scope.epoch === app.workspaceEpoch && scope.id === app.workspaceId && scope.legacy === app.legacyWorkspace);
   const captureDrawer = (ticketId = app.selectedId) => ({ ...captureWorkspace(), ticketId, drawerEpoch: app.drawerEpoch });
   const isCurrentDrawer = (scope) => Boolean(scope && isCurrentWorkspace(scope) && scope.ticketId === app.selectedId && scope.drawerEpoch === app.drawerEpoch);
+  const drawerMutationControls = () => $$("input, textarea, select, button", $("#drawer-body"));
+  const clearDrawerMutationForNavigation = () => {
+    app.drawerMutation = null;
+    app.uncertainDrawerWarning = null;
+    $("#ticket-drawer").removeAttribute("aria-busy");
+  };
+  const uncertainDrawerNotice = (ticket) => {
+    const warningState = app.uncertainDrawerWarning;
+    if (!warningState || !ticket || !isCurrentDrawer(warningState.scope) || warningState.scope.ticketId !== ticket.id) return null;
+    const warning = node("div", "alert alert-error", "Se reemplazó el formulario anterior por el contexto leído. La acción anterior sigue con resultado incierto. Una lectura posterior no demuestra si llegó a aplicarse; revisa también la auditoría antes de repetirla.");
+    warning.dataset.uncertainMutation = "true";
+    return warning;
+  };
+  const beginDrawerMutation = (scope) => {
+    if (!isCurrentDrawer(scope) || app.mutationCount || app.drawerMutation) {
+      toast("Espera a que termine la operación en curso.", true);
+      return null;
+    }
+    const controls = drawerMutationControls().map((control) => ({
+      control,
+      disabled: control.disabled,
+      readOnly: Boolean(control.readOnly)
+    }));
+    controls.forEach(({ control }) => { control.disabled = true; });
+    const notice = node("div", "context-note", "Guardando cambios…");
+    notice.dataset.drawerMutationNotice = "true";
+    notice.setAttribute("role", "status");
+    notice.setAttribute("aria-live", "polite");
+    $("#drawer-body").append(notice);
+    $("#ticket-drawer").setAttribute("aria-busy", "true");
+    const guard = { scope, controls, notice, outcome: "pending", contextLoaded: null };
+    app.drawerMutation = guard;
+    app.drawerDirty = true;
+    return guard;
+  };
+  const releaseDrawerMutation = (guard, { restore = false } = {}) => {
+    if (!guard || app.drawerMutation !== guard) return;
+    app.drawerMutation = null;
+    if (!isCurrentDrawer(guard.scope)) return;
+    $("#ticket-drawer").removeAttribute("aria-busy");
+    guard.notice.remove();
+    if (restore) {
+      guard.controls.forEach(({ control, disabled, readOnly }) => {
+        control.disabled = disabled;
+        control.readOnly = readOnly;
+      });
+    }
+  };
+  const textControlCanBeReadOnly = (control) => {
+    if (control.tagName === "TEXTAREA") return true;
+    return control.tagName === "INPUT" && !["button", "checkbox", "radio", "submit"].includes(String(control.type || "text").toLowerCase());
+  };
+  const retryDrawerContext = async (guard) => {
+    if (!guard || app.drawerMutation !== guard || !isCurrentDrawer(guard.scope)) return false;
+    const retry = guard.notice.querySelector("button");
+    if (retry) retry.disabled = true;
+    $("#ticket-drawer").setAttribute("aria-busy", "true");
+    const refreshed = await loadContext(guard.scope.ticketId, { forceRender: true, quietError: true });
+    if (!isCurrentDrawer(guard.scope) || app.drawerMutation !== guard) return false;
+    if (!refreshed) {
+      $("#ticket-drawer").removeAttribute("aria-busy");
+      if (retry) retry.disabled = false;
+      toast("No se pudo actualizar el contexto. La acción no se ha repetido; vuelve a intentar sólo la lectura.", true);
+      return false;
+    }
+    releaseDrawerMutation(guard);
+    toast(guard.uncertain
+      ? "Se cargó el contexto actual y se reemplazó el formulario anterior. La acción previa sigue con resultado incierto: revisa también la auditoría antes de repetirla."
+      : "Contexto actualizado; se reemplazó el formulario anterior. Revisa el estado actual antes de realizar otra acción.", guard.uncertain);
+    return true;
+  };
+  const requireDrawerContextRefresh = (guard, uncertain = false) => {
+    if (!guard || app.drawerMutation !== guard || !isCurrentDrawer(guard.scope)) return;
+    guard.uncertain = uncertain;
+    if (uncertain) app.uncertainDrawerWarning = { scope: { ...guard.scope } };
+    $("#ticket-drawer").removeAttribute("aria-busy");
+    guard.controls.forEach(({ control, disabled, readOnly }) => {
+      if (!disabled && textControlCanBeReadOnly(control)) {
+        control.disabled = false;
+        control.readOnly = true;
+      } else {
+        control.disabled = true;
+        control.readOnly = readOnly;
+      }
+    });
+    clear(guard.notice);
+    guard.notice.append(node("strong", "", uncertain ? "Resultado sin confirmar" : "Acción guardada"));
+    guard.notice.append(node("span", "", uncertain
+      ? " No se pudo confirmar la respuesta del servicio y no se sabe si aplicó la acción. Consulta el contexto antes de volver a enviarla."
+      : " El servicio confirmó la acción, pero no se pudo actualizar el contexto. No vuelvas a enviarla."));
+    const retry = node("button", "button button-secondary button-small", "Reintentar lectura de contexto");
+    retry.type = "button";
+    retry.addEventListener("click", () => retryDrawerContext(guard));
+    guard.notice.append(retry);
+  };
+  const finishConfirmedDrawerMutation = (guard) => {
+    if (!guard || !isCurrentDrawer(guard.scope)) return false;
+    if (guard.contextLoaded === false) {
+      requireDrawerContextRefresh(guard, false);
+      return false;
+    }
+    releaseDrawerMutation(guard);
+    app.drawerDirty = false;
+    return true;
+  };
+  const finishRejectedDrawerMutation = (guard) => {
+    if (!guard || !isCurrentDrawer(guard.scope)) return;
+    if (guard.outcome === "confirmed") {
+      requireDrawerContextRefresh(guard, false);
+      return;
+    }
+    if (guard.outcome === "uncertain") {
+      requireDrawerContextRefresh(guard, true);
+      return;
+    }
+    releaseDrawerMutation(guard, { restore: true });
+    app.drawerDirty = true;
+  };
   const hasDirtyEdits = () => app.drawerDirty || app.dialogDirty;
   const storedWorkspace = () => {
     try { return sessionStorage.getItem(WORKSPACE_SESSION_KEY); } catch (_) { return null; }
@@ -375,7 +495,7 @@
     }
   }
 
-  async function mutate(action, data, successMessage, { drawerScope = null } = {}) {
+  async function mutate(action, data, successMessage, { drawerScope = null, drawerGuard = null } = {}) {
     if (app.mutationCount) throw new Error("Espera a que termine la operación en curso.");
     const scope = captureWorkspace();
     let reloadAfterMutation = false;
@@ -392,17 +512,26 @@
       if (!isCurrentWorkspace(scope)) return null;
       if (!payload || typeof payload !== "object" || !payload.state) throw new Error("El servicio devolvió una acción sin estado actualizado");
       validateWorkspaceState(payload.state, scope);
+      if (drawerGuard) drawerGuard.outcome = "confirmed";
       app.state = payload.state;
       renderAll();
       if (app.selectedId && (!drawerScope || isCurrentDrawer(drawerScope))) {
-        await loadContext(app.selectedId, { forceRender: true });
+        const refreshed = await loadContext(app.selectedId, { forceRender: true, quietError: Boolean(drawerGuard) });
+        if (drawerGuard && isCurrentDrawer(drawerScope)) drawerGuard.contextLoaded = Boolean(refreshed);
       }
       if (!isCurrentWorkspace(scope)) return null;
-      if (successMessage && (!drawerScope || isCurrentDrawer(drawerScope))) toast(successMessage);
+      if (successMessage && (!drawerScope || isCurrentDrawer(drawerScope)) && (!drawerGuard || drawerGuard.contextLoaded !== false)) toast(successMessage);
       return payload?.result;
     } catch (error) {
       if (!isCurrentWorkspace(scope)) return null;
-      if (!drawerScope || isCurrentDrawer(drawerScope)) toast(error.message, true);
+      if (drawerGuard && drawerGuard.outcome !== "confirmed") {
+        drawerGuard.outcome = error instanceof ApiError && error.status >= 400 && error.status < 500 ? "rejected" : "uncertain";
+      }
+      if (!drawerScope || isCurrentDrawer(drawerScope)) {
+        toast(drawerGuard?.outcome === "uncertain"
+          ? "No se pudo confirmar si la acción se guardó. Consulta el contexto antes de volver a intentarla."
+          : error.message, true);
+      }
       if (action !== "complete_ticket" && (!drawerScope || isCurrentDrawer(drawerScope)) && /revision|conflict|actualiz|cambió/i.test(error.message)) reloadAfterMutation = true;
       throw error;
     } finally {
@@ -719,7 +848,7 @@
     $$('[data-display]').forEach((button) => button.classList.toggle("is-active", button.dataset.display === display));
   }
 
-  async function loadContext(id, { forceRender = false } = {}) {
+  async function loadContext(id, { forceRender = false, quietError = false } = {}) {
     const scope = captureWorkspace();
     const requestId = ++app.contextRequest;
     try {
@@ -732,12 +861,13 @@
       return context;
     } catch (error) {
       if (!isCurrentWorkspace(scope) || app.selectedId !== id || requestId !== app.contextRequest) return;
-      toast(`No se pudo cargar el contexto: ${error.message}`, true);
+      if (!quietError) toast(`No se pudo cargar el contexto: ${error.message}`, true);
       return null;
     }
   }
 
   function openTicket(id) {
+    clearDrawerMutationForNavigation();
     app.drawerEpoch += 1;
     app.selectedId = id;
     app.context = null;
@@ -756,6 +886,7 @@
   }
 
   function closeTicket() {
+    clearDrawerMutationForNavigation();
     app.drawerEpoch += 1;
     app.contextRequest += 1;
     app.selectedId = null;
@@ -825,7 +956,10 @@
     ].filter(Boolean);
     summaryData.forEach((value) => summary.append(node("span", "summary-pill", value)));
     if ((ticket.blockers || []).length) summary.append(node("span", "summary-pill blockers", `${ticket.blockers.length} bloqueo${ticket.blockers.length === 1 ? "" : "s"}`));
-    const sections = [summary, editSection(ticket), lifecycleSection(ticket)];
+    const sections = [summary];
+    const uncertainty = uncertainDrawerNotice(ticket);
+    if (uncertainty) sections.push(uncertainty);
+    sections.push(editSection(ticket), lifecycleSection(ticket));
     if (ticket.status === "queued" && ticket.ready) sections.push(executionSection(ticket));
     sections.push(relationsSection(ticket), evidenceSection(ticket), sourceChecksSection(), contextSection(ticket));
     body.append(...sections);
@@ -863,21 +997,24 @@
       event.preventDefault();
       const data = new FormData(form);
       const drawerScope = captureDrawer(ticket.id);
+      const payload = {
+        id: ticket.id,
+        expected_revision: currentTicket().revision,
+        title: data.get("title").trim(),
+        description: data.get("description").trim(),
+        type: data.get("type"), priority: data.get("priority"),
+        parent_id: data.get("parent_id") || null,
+        profile_id: data.get("profile_id") || null,
+        depends_on: values(data.get("depends_on")),
+        acceptance: values(data.get("acceptance"), /\n/)
+      };
+      const drawerGuard = beginDrawerMutation(drawerScope);
+      if (!drawerGuard) return;
       try {
-        await mutate("update_ticket", {
-          id: ticket.id,
-          expected_revision: currentTicket().revision,
-          title: data.get("title").trim(),
-          description: data.get("description").trim(),
-          type: data.get("type"), priority: data.get("priority"),
-          parent_id: data.get("parent_id") || null,
-          profile_id: data.get("profile_id") || null,
-          depends_on: values(data.get("depends_on")),
-          acceptance: values(data.get("acceptance"), /\n/)
-        }, "Tarea actualizada", { drawerScope });
+        await mutate("update_ticket", payload, "Tarea actualizada", { drawerScope, drawerGuard });
         if (!isCurrentDrawer(drawerScope)) return;
-        app.drawerDirty = false;
-      } catch (_) { /* shown globally */ }
+        finishConfirmedDrawerMutation(drawerGuard);
+      } catch (_) { finishRejectedDrawerMutation(drawerGuard); }
     });
     section.append(form);
     return section;
@@ -957,13 +1094,15 @@
         toast("La tarea ya no está en cola y lista. Actualiza su contexto.", true);
         return;
       }
-      start.disabled = true;
       const drawerScope = captureDrawer(ticket.id);
+      const payload = { ticket_id: ticket.id, worker_id: workerSelect.value, expected_revision: openTicketState.revision };
+      const drawerGuard = beginDrawerMutation(drawerScope);
+      if (!drawerGuard) return;
       try {
-        await mutate("start_run", { ticket_id: ticket.id, worker_id: workerSelect.value, expected_revision: openTicketState.revision }, "Ejecución iniciada", { drawerScope });
+        await mutate("start_run", payload, "Ejecución iniciada", { drawerScope, drawerGuard });
         if (!isCurrentDrawer(drawerScope)) return;
-        app.drawerDirty = false;
-      } catch (_) { if (isCurrentDrawer(drawerScope)) start.disabled = false; }
+        finishConfirmedDrawerMutation(drawerGuard);
+      } catch (_) { finishRejectedDrawerMutation(drawerGuard); }
     });
     section.append(form);
     return section;
@@ -1178,15 +1317,21 @@
     } else if (action === "split") {
       apiAction = "split_ticket"; payload = { ...base, children: values(data.get("children"), /\n/).map((title) => ({ title, profile_id: ticket.profile_id || null })) }; message = "Tarea dividida";
     }
+    const drawerGuard = beginDrawerMutation(drawerScope);
+    if (!drawerGuard) return;
     try {
-      await mutate(apiAction, payload, message, { drawerScope });
+      await mutate(apiAction, payload, message, { drawerScope, drawerGuard });
       if (!isCurrentDrawer(drawerScope)) return;
       if (action === "complete") app.reviewDraft = null;
-      app.drawerDirty = false;
+      finishConfirmedDrawerMutation(drawerGuard);
     } catch (error) {
       if (!isCurrentDrawer(drawerScope)) return;
-      if (action !== "complete" || !acceptanceRefreshConflict(error)) return;
-      await handleCompletionConflict(ticket, payload, drawerScope);
+      if (action === "complete" && acceptanceRefreshConflict(error)) {
+        await handleCompletionConflict(ticket, payload, drawerScope);
+        releaseDrawerMutation(drawerGuard);
+        return;
+      }
+      finishRejectedDrawerMutation(drawerGuard);
     }
   }
 
