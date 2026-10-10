@@ -6,7 +6,7 @@
 
 Turn goals into prioritized tickets, share durable context between agents, and keep delivery separate from acceptance. Humans use the web board; agents use the MCP server. Both operate on the same SQLite database.
 
-AgentRelay 0.16 combines a persistent ticket board, an MCP server and optional worker execution. Agents find work through filtered summaries and open current context with recent history; older audit events remain available by cursor. Register multiple local projects, inspect their priorities without starting workers, import complete plans without duplicates, capture exact review inputs and inspect changes between verified captures. Reserve one of several reviewed tickets by priority without duplicate claims after retries. Find a ticket's worker executions, recover a retained proposal after a conflict and review it against the current ticket without launching the worker again. Independent reviewers can return deliveries for correction while preserving the original evidence and keeping feedback in worker context. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
+AgentRelay 0.17 combines a persistent ticket board, an MCP server and optional worker execution. Agents find work through filtered summaries and open current context with recent history; older audit events remain available by cursor. Register multiple local projects, inspect their priorities without starting workers, import complete plans without duplicates, capture exact review inputs and inspect changes between verified captures. Reserve one of several reviewed tickets by priority without duplicate claims after retries. Find a ticket's worker executions, recover a retained proposal after a conflict and review it against the current ticket without launching the worker again. Independent reviewers can return deliveries for correction while preserving the original evidence and keeping feedback in worker context. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
 
 ![AgentRelay local board with explicitly fictional demo data](docs/preview.jpg)
 
@@ -48,6 +48,7 @@ Windows quick launch: `powershell -File .\Start-AgentRelay.ps1 -Demo`. It prefer
 - MCP tools for external agents and a companion [skill](skills/agentrelay-work/SKILL.md).
 - Explicit worker launch/cancel, timeouts, bounded output, durable run history and conflict-safe results.
 - Single-run proposal retrieval through CLI `run-result` and MCP `get_run_result`, preserving output for review after conflicts without replaying stale changes. [Usage and limits](docs/RUN_RESULTS.md).
+- Captured report text can be reviewed through MCP without filesystem access; exact UTF-8, bounded size and no import of older artifacts. [Inline reports](docs/INLINE_REPORTS.md).
 - Execution discovery through CLI `runs` and MCP `list_runs`, filtered by ticket and status with cursor pagination and a retained-proposal indicator. [Run history](docs/RUN_HISTORY.md).
 - Explicit local `verify-report` checks distinguish intact, modified, missing and uncheckable reports; optional previously retained receipt hashes detect receipt replacement. [Integrity limits](docs/REPORT_INTEGRITY.md).
 - Codex CLI and Ollama text adapters, plus a provider-independent JSON worker protocol.
@@ -140,7 +141,7 @@ python -m unittest discover -s tests -v
 
 Install `.[mcp]` to include the real SDK stdio integration test; otherwise it is explicitly skipped. The tests use disposable databases, including a complete help → resume → independent review scenario. No LLM is called.
 
-The latest [correction-workflow validation](docs/VALIDATION_0_16.md) covers real worker delivery, independent feedback and resubmission; [snapshot-diff validation](docs/VALIDATION_0_15.md) covers exact change context from documentary pilots. The project also has earlier browser QA of the human workflow. See [validation](docs/VALIDATION.md), [architecture and boundaries](docs/ARCHITECTURE.md) and [API contract](docs/CONTRACT.md).
+The latest [inline-report validation](docs/VALIDATION_0_17.md) covers report retrieval without filesystem access; [correction-workflow validation](docs/VALIDATION_0_16.md) covers real worker delivery, independent feedback and resubmission. The project also has earlier browser QA of the human workflow. See [validation](docs/VALIDATION.md), [architecture and boundaries](docs/ARCHITECTURE.md) and [API contract](docs/CONTRACT.md).
 
 The active [GitHub Actions workflow](.github/workflows/tests.yml) tests Python 3.11/3.12 on Windows and Linux and checks JavaScript syntax. [See actual runs and results](https://github.com/VC-Anvil/agentrelay/actions/workflows/tests.yml); local and real-inference results are documented independently in the validation report.
 

@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .run_results import MAX_RESULT_JSON, validate_result_depth
+from .run_results import MAX_RESULT_JSON, validate_artifact_markdown, validate_result_depth
 from .store import DomainError, EFFORTS, Store
 
 if os.name == "nt":
@@ -402,7 +402,8 @@ class ExecutionManager:
 
     @staticmethod
     def _validate_result(value) -> dict:
-        allowed = {"outcome", "summary", "evidence", "title", "description", "profile_id", "children"}
+        allowed = {"outcome", "summary", "evidence", "title", "description", "profile_id", "children",
+                   "artifact_markdown"}
         if not isinstance(value, dict) or set(value) - allowed:
             raise DomainError("invalid worker output fields")
         outcome = value.get("outcome")
@@ -426,9 +427,16 @@ class ExecutionManager:
         if outcome == "split":
             if not isinstance(children, list) or not 1 <= len(children) <= 16:
                 raise DomainError("split requires 1 to 16 children")
-        return {"outcome": outcome, "summary": summary, "evidence": evidence,
-                "title": title, "description": description, "profile_id": profile_id,
-                "children": children}
+        normalized = {"outcome": outcome, "summary": summary, "evidence": evidence,
+                      "title": title, "description": description, "profile_id": profile_id,
+                      "children": children}
+        if "artifact_markdown" in value:
+            try:
+                validate_artifact_markdown(value["artifact_markdown"])
+            except ValueError as exc:
+                raise DomainError(str(exc)) from exc
+            normalized["artifact_markdown"] = value["artifact_markdown"]
+        return normalized
 
     def _persist_result(self, run_id: str, result: dict) -> bool:
         """Capture validated protocol output before any ticket mutation, if still running."""

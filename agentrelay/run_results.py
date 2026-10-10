@@ -9,6 +9,20 @@ PUBLIC_RUN_FIELDS = ("id", "ticket_id", "worker_id", "status", "started_at",
                      "finished_at", "summary", "error", "model", "effort")
 MAX_RESULT_JSON = 4_194_304  # ASCII escaping can expand a valid 1 MiB UTF-8 worker output.
 MAX_RESULT_DEPTH = 64  # Root object counts as one container.
+MAX_REPORT_BYTES = 262_144
+
+
+def validate_artifact_markdown(value: str) -> bytes:
+    """Return exact UTF-8 bytes for a bounded, nonblank inline worker report."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("artifact_markdown must be nonempty text")
+    try:
+        encoded = value.encode("utf-8", errors="strict")
+    except UnicodeError as exc:
+        raise ValueError("artifact_markdown must be valid UTF-8") from exc
+    if len(encoded) > MAX_REPORT_BYTES:
+        raise ValueError(f"artifact_markdown exceeds {MAX_REPORT_BYTES} UTF-8 bytes")
+    return encoded
 
 
 def _invalid_constant(value):
@@ -66,6 +80,11 @@ def get_run_result(store: Store, run_id: str) -> dict:
             if not isinstance(result, dict):
                 raise DomainError("stored worker result is not an object", 500)
             validate_result_depth(result)
+            if "artifact_markdown" in result:
+                try:
+                    validate_artifact_markdown(result["artifact_markdown"])
+                except ValueError as exc:
+                    raise DomainError("stored worker result is invalid", 500) from exc
         else:
             result = None
         response = {

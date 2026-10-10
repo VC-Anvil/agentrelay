@@ -17,6 +17,7 @@ import unicodedata
 import uuid
 from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHandler
 
+from .run_results import validate_artifact_markdown
 from .snapshots import MAX_FILE_BYTES, MAX_MANIFEST_BYTES, verify_snapshot
 
 LIMIT = 1_048_576
@@ -51,7 +52,8 @@ messages, install software, start other agents or modify AgentRelay's database.
 Return JSON matching the schema. Keep summary under 4096 characters.
 Use submit only for work you actually delivered.
 Put the full useful result and verification limits in artifact_markdown; the adapter
-saves it as a local report. Never invent tests, paths, model calls or evidence.
+saves it as a local report and preserves it for explicit reviewer retrieval.
+Keep it within 262144 UTF-8 bytes. Never invent tests, paths, model calls or evidence.
 If blocked, explain what is missing; request help with title/description/profile_id,
 or split into children with explicit acceptance. Never mark the ticket completed:
 an independent reviewer decides. Unused fields are empty strings/arrays or null.
@@ -149,9 +151,10 @@ def persist_result(result, directory, packet, provider, snapshot_provenance=None
     evidence = result.get("evidence", [])
     if not isinstance(evidence, list):
         raise ValueError("evidence must be an array")
-    if report.strip():
+    report_bytes = validate_artifact_markdown(report) if report.strip() else None
+    if report_bytes is not None:
         path = directory / "report.md"
-        path.write_text(report, encoding="utf-8")
+        path.write_bytes(report_bytes)
         evidence.append({"kind": "report", "label": "Worker report — requires review", "uri": str(path)})
     result["evidence"] = evidence
     receipt = {
@@ -164,14 +167,16 @@ def persist_result(result, directory, packet, provider, snapshot_provenance=None
     }
     if snapshot_provenance is not None:
         receipt.update(snapshot_provenance)
-    if report.strip():
-        receipt["report_sha256"] = hashlib.sha256((directory / "report.md").read_bytes()).hexdigest()
+    if report_bytes is not None:
+        receipt["report_sha256"] = hashlib.sha256(report_bytes).hexdigest()
     receipt_path = directory / "receipt.json"
     receipt_path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
     # Keep the host's report hash discoverable even without an input snapshot.
     # This receipt records configuration and bytes, not provider attestation.
     evidence.insert(0, {"kind": "receipt", "label": "Host receipt — declared configuration and report metadata",
                         "uri": str(receipt_path)})
+    if report_bytes is not None:
+        result["artifact_markdown"] = report
     return result
 
 

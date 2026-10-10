@@ -128,6 +128,14 @@ not apply or approve anything. Read full current context and evaluate relevance
 before any authorized mutation. SQLite backup includes proposals; bulk run
 history and JSON export omit their bodies. [Full contract](RUN_RESULTS.md).
 
+Worker protocol results may include `artifact_markdown`: exact nonblank text,
+strict UTF-8, at most 262144 encoded bytes. Future adapter reports retain that
+field in the captured proposal and write matching UTF-8 bytes to the report file.
+Retrieval does not follow evidence paths. Older proposals without the field stay
+unchanged; no artifact is imported or inferred. Existing total output/storage
+limits still apply. The provider's structured schema remains distinct from this
+optional worker-protocol extension. [Inline reports](INLINE_REPORTS.md).
+
 CLI `runs`, MCP `list_runs` and Python `agentrelay.run_history.list_runs` discover
 executions without fetching proposal bodies. Filters `ticket_id` and `status` are
 optional, limit is a strict integer 1..100 (default 20), and `before_id` is an
