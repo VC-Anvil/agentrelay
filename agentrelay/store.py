@@ -609,6 +609,10 @@ class Store:
         fields = self._normalize_ticket_fields(db, {k: v for k, v in data.items() if k not in ("id", "expected_revision")})
         if not fields:
             raise DomainError("no fields to update")
+        if "parent_id" in fields and fields["parent_id"] != row["parent_id"] and row["parent_id"]:
+            old_parent = self._require_ticket(db, row["parent_id"])
+            if old_parent["status"] in ("done", "cancelled"):
+                raise DomainError("reopen closed parent before removing or moving child scope", 409)
         if "acceptance" in fields and owned_work:
             prior_criteria = set(json.loads(row["acceptance"]))
             if not prior_criteria.issubset(fields["acceptance"]):

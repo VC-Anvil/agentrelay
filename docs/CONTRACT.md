@@ -46,6 +46,19 @@ id string, name string, role string, provider string, model string, effort strin
 
 All relations must exist, dependency and parent cycles rejected (including execution deadlocks between hierarchy and dependencies). Audit actor/time/action/ticket_id/details. SQLite transactions, foreign keys/WAL, optimistic revisions. No destructive deletion/reset UI. Events include id, ticket_id nullable, actor, action, details object, created_at.
 
+Changing a child's `parent_id` requires both the old and new parents, when
+present, to be open: `done` and `cancelled` parents must be explicitly reopened
+before adding, detaching or moving child scope. A rejected operation returns 409
+without changing fields, relations, revisions or events. Existing validation also
+rejects an explicitly supplied unchanged `parent_id` pointing to a closed parent;
+omit that field when updating unrelated child fields.
+
+Reopening a child or dependency while retaining its relationships does not
+automatically reopen or invalidate a previously accepted parent. Acceptance is a
+historical decision. `expected_revision` versions the addressed ticket, not every
+derived item in its context; reviewers should reread current context before
+accepting. Completion checks current blockers within its write transaction.
+
 Cycle validation uses an iterative O(V+E) graph traversal. Valid deep hierarchies
 do not depend on Python's recursion limit. This is not a performance guarantee
 for rendering, listing or executing large boards.

@@ -25,6 +25,13 @@ Parent-to-child edges and explicit dependency edges form one execution graph for
 
 Submission records evidence and enters review. Completion needs all criteria explicitly accepted, dependencies resolved, and a reviewer identity different from the assignee. These rules protect workflow integrity; they do not prove an artifact is correct or establish cryptographic identity.
 
+Child membership cannot be added to or removed from a closed parent without
+explicitly reopening that parent. Both ends of a move are checked in the child's
+transaction. This does not freeze historical child/dependency status: reopening
+existing work retains the parent's earlier acceptance. Revisions protect each
+addressed ticket, not the entire derived context graph, so reviewers must inspect
+current relationships and evidence before accepting.
+
 Plan imports validate and create the full graph in the same write transaction.
 `plan_requests` stores the actor, canonical payload hash and original result;
 retries return that receipt without generating more tickets or events. SQLite
