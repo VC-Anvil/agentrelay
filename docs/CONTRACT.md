@@ -118,11 +118,13 @@ the read-only service behind cursor pages. Export and backup retain full history
 CLI `overview --workspaces REGISTRY --limit 5` and Python
 `project_overview(config_path, limit=5)` return a versioned multi-project summary:
 `{schema_version:1,default_workspace_id,count,limit,projects}`. Each project has
-`id,name,database,demo,stats,urgent_open,ready,review,blocked`. Urgent open is an
-integer excluding closed tickets. Each of the other three categories contains
+`id,name,database,demo,stats,urgent_open,urgent,ready,review,blocked`. Urgent open is
+an integer excluding closed tickets and equals `urgent.total`. Each category contains
 `{total,tickets}` with up to 1–20 summaries (default 5), ordered by priority,
 creation time and ID. Blocked includes manual blocks and queued tickets with
-derived blockers; review is a status, not an approval guarantee.
+derived blockers; review is a status, not an approval guarantee. Urgent includes
+backlog proposals without making them ready or authorizing execution. Categories
+may overlap; the additive `urgent` field keeps schema version 1.
 
 Overview reads one Store snapshot per project and does not initialize execution
 managers, read worker configs, recover runs or claim work. The workspace loader

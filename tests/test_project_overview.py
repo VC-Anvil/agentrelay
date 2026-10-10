@@ -128,7 +128,7 @@ class ProjectOverviewTests(unittest.TestCase):
 
         alpha, beta = projects["alpha"], projects["beta"]
         expected_project_fields = {"id", "name", "database", "demo", "stats", "urgent_open",
-                                   "ready", "review", "blocked"}
+                                   "urgent", "ready", "review", "blocked"}
         self.assertEqual(set(alpha), expected_project_fields)
         self.assertEqual(set(beta), expected_project_fields)
         self.assertFalse(alpha["demo"])
@@ -136,6 +136,11 @@ class ProjectOverviewTests(unittest.TestCase):
         self.assertEqual(alpha["stats"], before["alpha"]["stats"])
         self.assertEqual(beta["stats"], before["beta"]["stats"])
         self.assertEqual((alpha["urgent_open"], beta["urgent_open"]), (2, 1))
+        self.assertEqual((alpha["urgent"]["total"], beta["urgent"]["total"]), (2, 1))
+        self.assertEqual([ticket["title"] for ticket in alpha["urgent"]["tickets"]],
+                         ["Alpha urgent", "Alpha derived blocker"])
+        self.assertEqual([ticket["title"] for ticket in beta["urgent"]["tickets"]],
+                         ["Beta urgent"])
 
         self.assertEqual(alpha["ready"]["total"], 5)
         self.assertEqual([ticket["title"] for ticket in alpha["ready"]["tickets"]],
@@ -145,7 +150,7 @@ class ProjectOverviewTests(unittest.TestCase):
         self.assertEqual(alpha["blocked"]["total"], 2)
         self.assertEqual([ticket["title"] for ticket in alpha["blocked"]["tickets"]],
                          ["Alpha derived blocker", "Alpha explicit block"])
-        for category in ("ready", "review", "blocked"):
+        for category in ("urgent", "ready", "review", "blocked"):
             for ticket in alpha[category]["tickets"] + beta[category]["tickets"]:
                 self.assertEqual(set(ticket), set(SUMMARY_FIELDS))
                 self.assertNotIn("acceptance", ticket)
@@ -160,6 +165,62 @@ class ProjectOverviewTests(unittest.TestCase):
         for key in stores:
             self.assertEqual(self.domain(after[key]), self.domain(before[key]))
             self.assertNotIn("execution_runs", self.tables(self.root / f"{key}.sqlite"))
+
+    def test_urgent_backlog_and_active_states_are_visible_without_becoming_ready(self):
+        path = self.root / "urgent.sqlite"
+        store = Store(path)
+        backlog = self.create(store, "Proposal", priority="urgent")
+        store.action("transition", {"id": backlog["id"],
+                     "expected_revision": backlog["revision"], "status": "backlog"})
+        active = self.create(store, "Active", priority="urgent")
+        store.action("claim_ticket", {"id": active["id"],
+                     "expected_revision": active["revision"], "assignee": "agent:fixture",
+                     "actual_model": "fixture", "actual_effort": "high"}, actor="agent:fixture")
+        blocked = self.create(store, "Explicitly blocked", priority="urgent")
+        store.action("transition", {"id": blocked["id"],
+                     "expected_revision": blocked["revision"], "status": "blocked",
+                     "reason": "Needs a decision"})
+        review = self.create(store, "Under review", priority="urgent")
+        review = store.action("claim_ticket", {"id": review["id"],
+            "expected_revision": review["revision"], "assignee": "agent:fixture",
+            "actual_model": "fixture", "actual_effort": "high"}, actor="agent:fixture")
+        store.action("submit_ticket", {"id": review["id"],
+            "expected_revision": review["revision"], "summary": "Fixture submitted",
+            "evidence": [{"kind": "test", "label": "Fixture", "uri": "fixture://urgent"}]},
+            actor="agent:fixture")
+        queued = self.create(store, "Queued", priority="urgent")
+        cancelled = self.create(store, "Cancelled", priority="urgent")
+        store.action("transition", {"id": cancelled["id"],
+                     "expected_revision": cancelled["revision"], "status": "cancelled"})
+
+        other = Store(self.root / "other.sqlite")
+        same_id = self.create(other, "Ordinary proposal")
+        self.assertEqual(backlog["id"], same_id["id"])
+        registry = self.root / "urgent-workspaces.json"
+        registry.write_text(json.dumps({"workspaces": [
+            {"id": "urgent", "name": "Urgent project", "db": "urgent.sqlite"},
+            {"id": "other", "name": "Ordinary project", "db": "other.sqlite"},
+        ]}), encoding="utf-8")
+
+        bounded = {project["id"]: project for project in project_overview(registry, limit=2)["projects"]}
+        self.assertEqual(bounded["urgent"]["urgent_open"], 5)
+        self.assertEqual(bounded["urgent"]["urgent"]["total"], 5)
+        self.assertEqual([item["id"] for item in bounded["urgent"]["urgent"]["tickets"]],
+                         [backlog["id"], active["id"]])
+        self.assertEqual(bounded["urgent"]["urgent"]["tickets"][0]["status"], "backlog")
+        self.assertFalse(bounded["urgent"]["urgent"]["tickets"][0]["ready"])
+        self.assertEqual(bounded["other"]["urgent"], {"total": 0, "tickets": []})
+        self.assertEqual(bounded["other"]["urgent_open"], 0)
+        self.assertEqual(bounded["other"]["ready"]["tickets"][0]["id"], same_id["id"])
+
+        full = {project["id"]: project for project in project_overview(registry, limit=20)["projects"]}
+        statuses = {item["id"]: item["status"] for item in full["urgent"]["urgent"]["tickets"]}
+        self.assertEqual(statuses, {backlog["id"]: "backlog", active["id"]: "in_progress",
+                                    blocked["id"]: "blocked", review["id"]: "review",
+                                    queued["id"]: "queued"})
+        self.assertNotIn(cancelled["id"], statuses)
+        self.assertEqual({item["id"] for item in full["urgent"]["ready"]["tickets"]},
+                         {queued["id"]})
 
     def test_limit_is_strict_and_checked_before_registry_loading(self):
         invalid = (True, False, 0, 21, 1.0, "5", None)

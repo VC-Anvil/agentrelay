@@ -64,8 +64,15 @@ class CliOverviewTests(unittest.TestCase):
         self.assertEqual(projects["beta"]["review"]["tickets"][0]["id"], "AR-0001")
         self.assertEqual(projects["beta"]["review"]["tickets"][0]["title"], "Revisión beta")
         self.assertEqual(projects["alpha"]["urgent_open"], 1)
+        self.assertEqual(projects["alpha"]["urgent"], {
+            "total": 1,
+            "tickets": [projects["alpha"]["ready"]["tickets"][0]],
+        })
+        self.assertEqual(projects["beta"]["urgent"], {"total": 0, "tickets": []})
+        self.assertEqual(projects["beta"]["urgent_open"], 0)
         for project in projects.values():
-            for category in ("ready", "review", "blocked"):
+            self.assertEqual(project["urgent_open"], project["urgent"]["total"])
+            for category in ("urgent", "ready", "review", "blocked"):
                 self.assertLessEqual(len(project[category]["tickets"]), 1)
                 self.assertGreaterEqual(project[category]["total"], len(project[category]["tickets"]))
         self.assertFalse((self.root / ".agentrelay").exists())

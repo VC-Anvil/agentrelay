@@ -33,15 +33,20 @@ def project_overview(config_path, *, limit=5):
     for workspace in workspaces.values():
         state = workspace.store.state()
         tickets = state["tickets"]
+        urgent = _category(
+            tickets,
+            lambda ticket: (ticket["priority"] == "urgent"
+                            and ticket["status"] not in {"done", "cancelled"}),
+            limit,
+        )
         projects.append({
             "id": workspace.id,
             "name": workspace.name,
             "database": str(Path(workspace.store.path).resolve()),
             "demo": state["demo"],
             "stats": state["stats"],
-            "urgent_open": sum(ticket["priority"] == "urgent"
-                               and ticket["status"] not in {"done", "cancelled"}
-                               for ticket in tickets),
+            "urgent_open": urgent["total"],
+            "urgent": urgent,
             "ready": _category(tickets, lambda ticket: ticket["ready"], limit),
             "review": _category(tickets, lambda ticket: ticket["status"] == "review", limit),
             "blocked": _category(
