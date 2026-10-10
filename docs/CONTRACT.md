@@ -37,7 +37,7 @@ id string, name string, role string, provider string, model string, effort strin
 - claim_next_ticket: exact `{request_id,candidates,assignee,actual_model,actual_effort}`. Candidates are 1..64 unique `{ticket_id,expected_revision}` entries whose full context the caller has reviewed. Identifiers and declarations are nonempty strings up to 128 characters without surrounding whitespace; revisions are positive integers, never booleans. Unknown ticket IDs fail the whole request (404). Stale revisions, non-ready tickets, empty acceptance and incompatible Astra declarations are skipped; eligible candidates sort by priority, creation time, then ID. Returns `{request_id,ticket,skipped}` with one claimed ticket or null. Only supplied IDs can be claimed. The agent actor must match assignee; MCP binds it to the connection. Same request ID/actor/exact canonical payload recovers its original historical receipt, including idle outcomes, without another claim or event. Changed actor/payload conflicts (409). SQLite backup preserves receipts; bulk export does not include them. See [scoped claims](CLAIM_NEXT.md). No model execution or automatic acceptance.
 - checkpoint: id, expected_revision, checkpoint required. Append activity and increment revision.
 - submit_ticket: id, expected_revision, summary string, evidence array required nonempty. Only in_progress, same owner or human. Moves to review and updates checkpoint/evidence. A URI is a reference, not verified proof.
-- complete_ticket: id, expected_revision, verification string required, accepted_criteria string[] required matching all acceptance criteria. Only review and dependencies/children complete (cancelled children allowed); actor cannot equal assignee (human actor can review other agents). Meaningful acceptance required. Records reviewer and verification event. No automated truth claim.
+- complete_ticket: id, expected_revision, expected_acceptance_context_token, verification string required, accepted_criteria string[] required matching all acceptance criteria. Obtain the required token from the context actually reviewed. Missing/malformed token is 400; a changed immediate acceptance context is 409 with no writes. Only review and dependencies/children complete (cancelled children allowed); actor cannot equal assignee (human actor can review other agents). Meaningful acceptance required. Records reviewer, verification and validated context token. No automated truth claim. See [acceptance context](ACCEPTANCE_CONTEXT.md).
 - request_help: id, expected_revision, title, description, profile_id optional. Transactionally creates a help child inheriting the current parent priority, makes the parent depend on it, and marks the parent blocked with a reason. Later priority changes do not propagate between tickets. Child references parent's context but does not depend on parent (no cycle). On help completion parent remains explicitly blocked until requeued by owner/human.
 - split_ticket: id, expected_revision, children array of {title,description?,profile_id?,acceptance?}. Creates queued children, marks original blocked, preserves history. Reject empty children.
 - add_comment: id, body string.
@@ -56,8 +56,11 @@ omit that field when updating unrelated child fields.
 Reopening a child or dependency while retaining its relationships does not
 automatically reopen or invalidate a previously accepted parent. Acceptance is a
 historical decision. `expected_revision` versions the addressed ticket, not every
-derived item in its context; reviewers should reread current context before
-accepting. Completion checks current blockers within its write transaction.
+derived item in its context. Since 0.18, acceptance additionally requires the
+`acceptance_context.token` returned in the context the reviewer inspected. That
+token covers immediate children/dependencies and direct source checks, not the
+recursive graph. Completion compares it and checks current blockers within its
+write transaction.
 
 Cycle validation uses an iterative O(V+E) graph traversal. Valid deep hierarchies
 do not depend on Python's recursion limit. This is not a performance guarantee

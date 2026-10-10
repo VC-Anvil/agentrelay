@@ -38,7 +38,7 @@ class IntegrityTests(unittest.TestCase):
         parent = self.store.action("create_ticket", {"title": "Closed goal", "acceptance": ["Integrated result reviewed"]})
         parent = self.store.action("claim_ticket", {"id": parent["id"], "expected_revision": 1, "assignee": "agent:worker"})
         parent = self.store.action("submit_ticket", {"id": parent["id"], "expected_revision": parent["revision"], "summary": "Delivered", "evidence": [{"kind": "test", "label": "Fixture", "uri": "test://closed"}]})
-        parent = self.store.action("complete_ticket", {"id": parent["id"], "expected_revision": parent["revision"], "verification": "Reviewed", "accepted_criteria": parent["acceptance"]})
+        parent = self.store.action("complete_ticket", {"expected_acceptance_context_token": self.store.context(parent["id"])["acceptance_context"]["token"], "id": parent["id"], "expected_revision": parent["revision"], "verification": "Reviewed", "accepted_criteria": parent["acceptance"]})
         with self.assertRaises(DomainError) as error:
             self.store.action("create_ticket", {"title": "New child", "parent_id": parent["id"]})
         self.assertEqual(error.exception.status, 409)

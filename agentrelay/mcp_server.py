@@ -293,10 +293,18 @@ def create_mcp(store: Store, actor: str) -> FastMCP:
                                     "summary": summary, "evidence": evidence})
 
     @server.tool(annotations=write)
-    def review_ticket(ticket_id: str, expected_revision: int, verification: str, accepted_criteria: list[str]) -> dict:
-        """Independent reviewer closes a delivered ticket after checking every acceptance criterion."""
+    def review_ticket(ticket_id: str, expected_revision: int, verification: str,
+                      accepted_criteria: list[str], expected_acceptance_context_token: str) -> dict:
+        """Accept after reviewing the context returned by get_ticket_context.
+
+        Supply that context's acceptance_context.token, not a silently refreshed
+        token. A 409 requires rereading the changed context and deciding again.
+        The token covers immediate relations, not the recursive graph or evidence
+        file contents. Distinct reviewer identity and all criteria remain required.
+        """
         return act("complete_ticket", {"id": ticket_id, "expected_revision": expected_revision,
-                                      "verification": verification, "accepted_criteria": accepted_criteria})
+                                      "verification": verification, "accepted_criteria": accepted_criteria,
+                                      "expected_acceptance_context_token": expected_acceptance_context_token})
 
     @server.tool(annotations=write)
     def request_ticket_changes(ticket_id: str, expected_revision: StrictInt, reason: str) -> dict:

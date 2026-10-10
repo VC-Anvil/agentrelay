@@ -141,6 +141,16 @@ local CLI functionality, not an MCP filesystem tool.
 
 An independent reviewer uses `review_ticket` only after inspecting the evidence against every acceptance criterion. Record what was actually verified and any limits. The author's connection cannot approve its own work. The human UI is a separate reviewer identity, not an automatic verification engine.
 
+Before accepting, obtain `get_ticket_context` and review that returned context.
+Pass its `acceptance_context.token` as the required
+`expected_acceptance_context_token` parameter to `review_ticket`, together with
+the ticket revision and all accepted criteria. The equivalent `complete_ticket`
+action requires the same field. It detects current differences from the inspected ticket, immediate
+children/dependencies and the direct ticket's displayed source checks; it does
+not cover the recursive graph or files behind evidence links. A 409 means reread
+and review again. Never fetch a replacement token merely to retry an approval
+without inspecting the changed context. Comments alone do not change the token.
+
 If a delivered ticket needs correction, an independent reviewer can call
 `request_ticket_changes(ticket_id, expected_revision, reason)` with concrete
 findings. This explicitly returns a `review` ticket to the queue and releases

@@ -57,7 +57,7 @@ class ReviewChangesTests(unittest.TestCase):
         dependency = self.store.action("submit_ticket", {
             "id": dependency["id"], "expected_revision": 2,
             "summary": "Dep delivered", "evidence": EVIDENCE}, "agent:dep")
-        dependency = self.store.action("complete_ticket", {
+        dependency = self.store.action("complete_ticket", {"expected_acceptance_context_token": self.store.context(dependency["id"])["acceptance_context"]["token"],
             "id": dependency["id"], "expected_revision": 3,
             "verification": "Checked", "accepted_criteria": ACCEPTANCE}, "agent:reviewer")
         delivered = self.submitted(depends_on=[dependency["id"]])
@@ -131,7 +131,7 @@ class ReviewChangesTests(unittest.TestCase):
                         ticket = self.store.action("submit_ticket", {
                             "id": ticket["id"], "expected_revision": ticket["revision"],
                             "summary": "Delivered", "evidence": EVIDENCE}, "agent:author")
-                        ticket = self.store.action("complete_ticket", {
+                        ticket = self.store.action("complete_ticket", {"expected_acceptance_context_token": self.store.context(ticket["id"])["acceptance_context"]["token"],
                             "id": ticket["id"], "expected_revision": ticket["revision"],
                             "verification": "Checked", "accepted_criteria": ACCEPTANCE}, "agent:reviewer")
                 self.assert_error(409, {"id": ticket["id"], "expected_revision": ticket["revision"],
@@ -198,7 +198,7 @@ class ReviewChangesTests(unittest.TestCase):
         resubmitted = self.store.action("submit_ticket", {
             "id": claimed["id"], "expected_revision": claimed["revision"],
             "summary": "Revised again", "evidence": EVIDENCE}, "agent:author")
-        completed = self.store.action("complete_ticket", {
+        completed = self.store.action("complete_ticket", {"expected_acceptance_context_token": self.store.context(resubmitted["id"])["acceptance_context"]["token"],
             "id": resubmitted["id"], "expected_revision": resubmitted["revision"],
             "verification": "Verified independently", "accepted_criteria": ACCEPTANCE}, "agent:reviewer")
         final_feedback = self.store.context(completed["id"], event_limit=1)["review_feedback"]

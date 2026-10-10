@@ -79,7 +79,7 @@ class ProjectOverviewTests(unittest.TestCase):
             "summary": "Checked",
             "evidence": [{"kind": "test", "label": "Fixture", "uri": "fixture://beta"}],
         }, actor="agent:beta")
-        beta.action("complete_ticket", {
+        beta.action("complete_ticket", {"expected_acceptance_context_token": beta.context(closed["id"])["acceptance_context"]["token"],
             "id": closed["id"], "expected_revision": closed["revision"],
             "verification": "Independent fixture review",
             "accepted_criteria": closed["acceptance"],

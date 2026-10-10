@@ -68,11 +68,11 @@ class HelpPriorityTests(unittest.TestCase):
             "expected_revision": claimed["revision"], "summary": "Help delivered",
             "evidence": EVIDENCE}, "agent:helper")
         with self.assertRaises(DomainError) as caught:
-            self.store.action("complete_ticket", {"id": child["id"],
+            self.store.action("complete_ticket", {"expected_acceptance_context_token": self.store.context(child["id"])["acceptance_context"]["token"], "id": child["id"],
                 "expected_revision": submitted["revision"], "verification": "Checked",
                 "accepted_criteria": [HELP_CRITERION]}, "agent:helper")
         self.assertEqual(caught.exception.status, 409)
-        completed = self.store.action("complete_ticket", {"id": child["id"],
+        completed = self.store.action("complete_ticket", {"expected_acceptance_context_token": self.store.context(child["id"])["acceptance_context"]["token"], "id": child["id"],
             "expected_revision": submitted["revision"], "verification": "Help report checked",
             "accepted_criteria": [HELP_CRITERION]}, "agent:reviewer")
         self.assertEqual(completed["status"], "done")

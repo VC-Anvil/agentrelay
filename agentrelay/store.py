@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import re
 import sqlite3
 from collections import deque
 from contextlib import contextmanager
@@ -15,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
+from .acceptance_context import SCHEMA_VERSION as ACCEPTANCE_CONTEXT_SCHEMA_VERSION
+from .acceptance_context import acceptance_context_in_tx
 from .database import DatabaseRecognitionError, recognize_agentrelay_database
 
 
@@ -342,6 +345,8 @@ class Store:
             context["source_checks"] = checks_page["checks"]
             context["source_checks_page"] = {key: checks_page[key] for key in
                                              ("total", "count", "limit", "next_before_id")}
+            context["acceptance_context"] = (acceptance_context_in_tx(db, ticket, checks_page)
+                                             if ticket["status"] == "review" else None)
             context["instructions"] += " Source checks are historical advisory observations, not proof that files remain current."
             if page is not None:
                 context["events_page"] = {key: page[key] for key in ("total", "count", "limit", "next_before_id")}
@@ -784,7 +789,14 @@ class Store:
         return self._ticket(db, row["id"])
 
     def _complete(self, db, data, actor):
-        row = self._require_ticket(db, data.get("id"))
+        ticket_id = _nonempty(data.get("id"), "id")
+        revision = data.get("expected_revision")
+        if type(revision) is not int or revision < 1:
+            raise DomainError("expected_revision must be a positive integer")
+        token = data.get("expected_acceptance_context_token")
+        if not isinstance(token, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", token) is None:
+            raise DomainError("expected_acceptance_context_token must be sha256: plus 64 lowercase hex characters")
+        row = self._require_ticket(db, ticket_id)
         self._expect(row, data)
         if row["status"] != "review":
             raise DomainError("complete requires review ticket", 409)
@@ -797,11 +809,19 @@ class Store:
             raise DomainError("meaningful acceptance criteria required", 409)
         if set(required) != set(accepted):
             raise DomainError("accepted_criteria must match all acceptance criteria", 409)
+        from .source_checks import _page_in_tx
+        checks_page = _page_in_tx(db, row["id"], 3, current_revision=row["revision"])
+        current_context = acceptance_context_in_tx(db, row, checks_page)
+        if token != current_context["token"]:
+            raise DomainError("acceptance context changed; reread ticket context before completing", 409)
         ticket = self._ticket(db, row["id"])
         if ticket["blockers"]:
             raise DomainError("cannot complete with blockers: " + "; ".join(ticket["blockers"]), 409)
         self._update_row(db, row["id"], {"status": "done"})
-        self._event(db, row["id"], actor, "complete_ticket", {"reviewer": actor, "verification": verification, "accepted_criteria": accepted})
+        self._event(db, row["id"], actor, "complete_ticket", {
+            "reviewer": actor, "verification": verification, "accepted_criteria": accepted,
+            "acceptance_context_schema_version": ACCEPTANCE_CONTEXT_SCHEMA_VERSION,
+            "expected_acceptance_context_token": token})
         return self._ticket(db, row["id"])
 
     def _request_changes(self, db, data, actor):

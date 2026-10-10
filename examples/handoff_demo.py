@@ -155,9 +155,11 @@ def run_example(output: Path) -> dict:
         if feedback is None or feedback["reason"] != REVIEW_REASON:
             raise RuntimeError("fixture review feedback was not retained")
         child, corrected_run, corrected_report = _run_fixture(manager, store, child, "help-corrected")
+        child_review_context = store.context(child["id"])
         if corrected_report != REPORTS["help-corrected"] or "23 MHz" not in corrected_report:
             raise RuntimeError("corrected fixture report did not address the review reason")
         child = _act(store, "complete_ticket", child, REVIEWER,
+                     expected_acceptance_context_token=child_review_context["acceptance_context"]["token"],
                      verification="El informe simulado corregido incluye MHz y distingue el ejemplo de una medición.",
                      accepted_criteria=[ACCEPT_HELP])
         accepted_child_context = store.context(child["id"])
@@ -168,10 +170,12 @@ def run_example(output: Path) -> dict:
             raise RuntimeError("parent resumed implicitly")
         parent = _act(store, "transition", parent, PARENT_OWNER, status="queued")
         parent, parent_run, parent_report = _run_fixture(manager, store, parent, "parent")
+        parent_review_context = store.context(parent["id"])
         if (child["id"] not in parent_report or "23 MHz" not in parent_report
                 or "simulad" not in parent_report.lower() or "no hay medición real" not in parent_report):
             raise RuntimeError("parent fixture report did not use accepted child context and simulation limits")
         parent = _act(store, "complete_ticket", parent, REVIEWER,
+                      expected_acceptance_context_token=parent_review_context["acceptance_context"]["token"],
                       verification="El informe final simulado usa el hijo aceptado y explicita los límites.",
                       accepted_criteria=[ACCEPT_PARENT])
     finally:

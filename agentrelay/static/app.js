@@ -69,6 +69,8 @@
     display: localStorage.getItem("agentrelay-view") || "board",
     selectedId: null,
     context: null,
+    reviewDraft: null,
+    drawerEpoch: 0,
     drawerDirty: false,
     dialogDirty: false,
     loadingEpoch: null,
@@ -96,6 +98,8 @@
   const activeWorkspace = () => app.workspaces.find((workspace) => workspace.id === app.workspaceId) || app.state?.workspace || null;
   const captureWorkspace = () => ({ id: app.workspaceId, epoch: app.workspaceEpoch, legacy: app.legacyWorkspace });
   const isCurrentWorkspace = (scope) => Boolean(scope && scope.epoch === app.workspaceEpoch && scope.id === app.workspaceId && scope.legacy === app.legacyWorkspace);
+  const captureDrawer = (ticketId = app.selectedId) => ({ ...captureWorkspace(), ticketId, drawerEpoch: app.drawerEpoch });
+  const isCurrentDrawer = (scope) => Boolean(scope && isCurrentWorkspace(scope) && scope.ticketId === app.selectedId && scope.drawerEpoch === app.drawerEpoch);
   const hasDirtyEdits = () => app.drawerDirty || app.dialogDirty;
   const storedWorkspace = () => {
     try { return sessionStorage.getItem(WORKSPACE_SESSION_KEY); } catch (_) { return null; }
@@ -106,6 +110,37 @@
   // Keep the revision represented by the open form. Background polling may refresh
   // the board, but must not silently turn a stale edit into a last-write-wins edit.
   const currentTicket = () => app.context?.ticket || app.state?.tickets?.find((ticket) => ticket.id === app.selectedId) || null;
+  const ACCEPTANCE_CONTEXT_TOKEN = /^sha256:[0-9a-f]{64}$/;
+  const ACCEPTANCE_CONTEXT_CHANGED = "acceptance context changed; reread ticket context before completing";
+  const acceptanceContextToken = (context = app.context) => {
+    const acceptanceContext = context?.acceptance_context;
+    if (context?.ticket?.status !== "review" || acceptanceContext?.schema_version !== 1) return null;
+    return typeof acceptanceContext.token === "string" && ACCEPTANCE_CONTEXT_TOKEN.test(acceptanceContext.token) ? acceptanceContext.token : null;
+  };
+  const reviewDraftFor = (ticket) => {
+    const draft = app.reviewDraft;
+    return draft && ticket && draft.workspaceId === app.workspaceId && draft.workspaceEpoch === app.workspaceEpoch && draft.drawerEpoch === app.drawerEpoch && draft.ticketId === ticket.id ? draft : null;
+  };
+  const acceptanceRefreshConflict = (error) => Boolean(error?.status === 409 && (
+    error.message === ACCEPTANCE_CONTEXT_CHANGED
+    || /^revision conflict for .+: expected [0-9]+, current [0-9]+$/.test(error.message)
+  ));
+  const buildCompletionPayload = (ticket, { verification, acceptedCriteria, acceptanceToken, confirmed = false }) => {
+    if (!acceptanceToken || !ACCEPTANCE_CONTEXT_TOKEN.test(acceptanceToken)) {
+      throw new Error("Este contexto no incluye la huella de aceptación requerida. Actualiza el servicio y vuelve a cargar la tarea antes de revisarla.");
+    }
+    const draft = reviewDraftFor(ticket);
+    if (draft?.needsConfirmation && !confirmed) {
+      throw new Error("Revisa el contexto actualizado y confirma de nuevo antes de completar la tarea.");
+    }
+    return {
+      id: ticket.id,
+      expected_revision: ticket.revision,
+      expected_acceptance_context_token: acceptanceToken,
+      verification,
+      accepted_criteria: acceptedCriteria
+    };
+  };
   const profileById = (id) => app.state?.profiles?.find((profile) => profile.id === id) || null;
   const formatDate = (value) => {
     if (!value) return "Sin fecha";
@@ -340,7 +375,7 @@
     }
   }
 
-  async function mutate(action, data, successMessage) {
+  async function mutate(action, data, successMessage, { drawerScope = null } = {}) {
     if (app.mutationCount) throw new Error("Espera a que termine la operación en curso.");
     const scope = captureWorkspace();
     let reloadAfterMutation = false;
@@ -359,16 +394,16 @@
       validateWorkspaceState(payload.state, scope);
       app.state = payload.state;
       renderAll();
-      if (app.selectedId) {
+      if (app.selectedId && (!drawerScope || isCurrentDrawer(drawerScope))) {
         await loadContext(app.selectedId, { forceRender: true });
       }
       if (!isCurrentWorkspace(scope)) return null;
-      if (successMessage) toast(successMessage);
+      if (successMessage && (!drawerScope || isCurrentDrawer(drawerScope))) toast(successMessage);
       return payload?.result;
     } catch (error) {
       if (!isCurrentWorkspace(scope)) return null;
-      toast(error.message, true);
-      if (/revision|conflict|actualiz|cambió/i.test(error.message)) reloadAfterMutation = true;
+      if (!drawerScope || isCurrentDrawer(drawerScope)) toast(error.message, true);
+      if (action !== "complete_ticket" && /revision|conflict|actualiz|cambió/i.test(error.message)) reloadAfterMutation = true;
       throw error;
     } finally {
       app.mutationCount = Math.max(0, app.mutationCount - 1);
@@ -694,15 +729,19 @@
       if (!forceRender && app.drawerDirty) return;
       app.context = context;
       if (forceRender || !app.drawerDirty) renderDrawer();
+      return context;
     } catch (error) {
       if (!isCurrentWorkspace(scope) || app.selectedId !== id || requestId !== app.contextRequest) return;
       toast(`No se pudo cargar el contexto: ${error.message}`, true);
+      return null;
     }
   }
 
   function openTicket(id) {
+    app.drawerEpoch += 1;
     app.selectedId = id;
     app.context = null;
+    app.reviewDraft = null;
     app.drawerDirty = false;
     $("#scrim").hidden = false;
     const drawer = $("#ticket-drawer");
@@ -717,9 +756,11 @@
   }
 
   function closeTicket() {
+    app.drawerEpoch += 1;
     app.contextRequest += 1;
     app.selectedId = null;
     app.context = null;
+    app.reviewDraft = null;
     app.drawerDirty = false;
     $("#scrim").hidden = true;
     const drawer = $("#ticket-drawer");
@@ -786,7 +827,7 @@
     if ((ticket.blockers || []).length) summary.append(node("span", "summary-pill blockers", `${ticket.blockers.length} bloqueo${ticket.blockers.length === 1 ? "" : "s"}`));
     const sections = [summary, editSection(ticket), lifecycleSection(ticket)];
     if (ticket.status === "queued" && ticket.ready) sections.push(executionSection(ticket));
-    sections.push(relationsSection(ticket), evidenceSection(ticket), contextSection(ticket));
+    sections.push(relationsSection(ticket), evidenceSection(ticket), sourceChecksSection(), contextSection(ticket));
     body.append(...sections);
     app.drawerDirty = false;
     const markDirty = () => { app.drawerDirty = true; };
@@ -928,6 +969,8 @@
     const form = node("form", "stack-form action-panel");
     const profile = profileById(ticket.profile_id);
     let submitLabel = "Guardar";
+    let completionAvailable = true;
+    let confirmationControl = null;
     if (action === "claim") {
       const assignee = input("assignee", "human"); assignee.required = true;
       form.append(field("Responsable", assignee));
@@ -950,11 +993,17 @@
       form.append(grid);
       submitLabel = "Enviar a revisión";
     } else if (action === "complete") {
-      const verification = textarea("verification", "", 3); verification.required = true;
+      const draft = reviewDraftFor(ticket);
+      const token = acceptanceContextToken();
+      form.dataset.acceptanceContextToken = token || "";
+      const verification = textarea("verification", draft?.verification || "", 3); verification.required = true;
       form.append(field("Verificación realizada", verification));
       const checklist = node("div", "check-list");
+      const criterionControls = [];
       (ticket.acceptance || []).forEach((criterion, index) => {
         const check = input("accepted_criteria", criterion, "checkbox");
+        check.checked = Boolean(draft?.acceptedCriteria?.includes(criterion));
+        criterionControls.push(check);
         check.id = `criterion-${ticket.id}-${index}`;
         const label = node("label", "check-row");
         label.htmlFor = check.id;
@@ -963,6 +1012,34 @@
       });
       if (!(ticket.acceptance || []).length) checklist.append(node("div", "context-note", "Esta tarea no tiene criterios de aceptación. El backend exige una aceptación significativa para completarla."));
       form.append(checklist);
+      if (!token) {
+        completionAvailable = false;
+        form.append(node("div", "alert alert-error", "Este contexto no incluye la huella de aceptación obligatoria. Actualiza el servicio y vuelve a cargar o abrir la tarea; no se puede aceptar con contexto heredado."));
+      } else if (draft?.refreshRequired) {
+        completionAvailable = false;
+        form.append(node("div", "alert alert-error", "No se pudo cargar el contexto actualizado. Tu borrador está guardado, pero debes reintentar la lectura antes de aceptar."));
+        const retry = node("button", "button button-secondary button-small", "Reintentar carga de contexto");
+        retry.type = "button";
+        retry.addEventListener("click", async () => {
+          const currentDraft = reviewDraftFor(ticket);
+          if (currentDraft) {
+            currentDraft.verification = verification.value;
+            currentDraft.acceptedCriteria = criterionControls.filter((control) => control.checked).map((control) => control.value);
+          }
+          retry.disabled = true;
+          verification.disabled = true;
+          criterionControls.forEach((control) => { control.disabled = true; });
+          await refreshCompletionContext(ticket.id);
+          if (reviewDraftFor(currentTicket())?.refreshRequired) retry.disabled = false;
+        });
+        form.append(retry);
+      } else if (draft?.needsConfirmation) {
+        form.append(node("div", "alert alert-error", "El contexto de aceptación cambió. Se conservaron tu verificación y criterios, pero debes revisar las relaciones y la evidencia actualizadas antes de confirmar de nuevo."));
+        confirmationControl = input("confirm_updated_context", "yes", "checkbox");
+        const confirmationLabel = node("label", "check-row");
+        confirmationLabel.append(confirmationControl, node("span", "", "He revisado el contexto actualizado y confirmo esta aceptación."));
+        form.append(confirmationLabel);
+      }
       submitLabel = "Completar tarea";
     } else if (action === "transition") {
       const allowed = [];
@@ -1007,9 +1084,53 @@
     }
     const actions = node("div", "form-actions");
     const submit = node("button", "button button-primary button-small", submitLabel); submit.type = "submit";
+    if (action === "complete") {
+      submit.disabled = !completionAvailable || Boolean(confirmationControl);
+      confirmationControl?.addEventListener("change", () => { submit.disabled = !confirmationControl.checked; });
+    }
     actions.append(submit); form.append(actions);
     form.addEventListener("submit", (event) => submitActionForm(event, action, ticket));
     return form;
+  }
+
+  async function refreshCompletionContext(ticketId, drawerScope = captureDrawer(ticketId)) {
+    if (!isCurrentDrawer(drawerScope)) return false;
+    const draft = reviewDraftFor({ id: ticketId });
+    if (!draft) return false;
+    draft.refreshRequired = false;
+    app.drawerDirty = false;
+    const refreshed = await loadContext(ticketId, { forceRender: true });
+    if (!isCurrentDrawer(drawerScope)) return false;
+    if (!refreshed) {
+      draft.refreshRequired = true;
+      renderDrawer();
+      app.drawerDirty = true;
+      toast("No se pudo cargar el contexto actualizado. Tu borrador sigue guardado; usa Reintentar carga de contexto.", true);
+      return false;
+    }
+    if (refreshed.ticket?.status !== "review") {
+      app.reviewDraft = null;
+      toast("La tarea ya no está en revisión. Se cargó su estado actual y no se reenvió la aceptación.", true);
+      return false;
+    }
+    toast("El contexto cambió. Revisa los datos actualizados y confirma de nuevo; no se ha reenviado la aceptación.", true);
+    return true;
+  }
+
+  async function handleCompletionConflict(ticket, payload, drawerScope = captureDrawer(ticket.id)) {
+    if (!isCurrentDrawer(drawerScope)) return false;
+    app.reviewDraft = {
+      workspaceId: drawerScope.id,
+      workspaceEpoch: drawerScope.epoch,
+      drawerEpoch: drawerScope.drawerEpoch,
+      ticketId: ticket.id,
+      verification: payload.verification,
+      acceptedCriteria: [...payload.accepted_criteria],
+      previousToken: payload.expected_acceptance_context_token,
+      needsConfirmation: true,
+      refreshRequired: false
+    };
+    return refreshCompletionContext(ticket.id, drawerScope);
   }
 
   async function submitActionForm(event, action, originalTicket) {
@@ -1017,6 +1138,7 @@
     const form = event.currentTarget;
     const data = new FormData(form);
     const ticket = currentTicket() || originalTicket;
+    const completionScope = action === "complete" ? captureDrawer(ticket.id) : null;
     const base = { id: ticket.id, expected_revision: ticket.revision };
     let apiAction = action;
     let payload = base;
@@ -1028,7 +1150,19 @@
     } else if (action === "submit") {
       apiAction = "submit_ticket"; payload = { ...base, summary: data.get("summary").trim(), evidence: [{ kind: data.get("evidence_kind").trim(), label: data.get("evidence_label").trim(), uri: data.get("evidence_uri").trim() }] }; message = "Enviada a revisión";
     } else if (action === "complete") {
-      apiAction = "complete_ticket"; payload = { ...base, verification: data.get("verification").trim(), accepted_criteria: data.getAll("accepted_criteria") }; message = "Tarea completada";
+      apiAction = "complete_ticket";
+      try {
+        payload = buildCompletionPayload(ticket, {
+          verification: data.get("verification").trim(),
+          acceptedCriteria: data.getAll("accepted_criteria"),
+          acceptanceToken: form.dataset.acceptanceContextToken,
+          confirmed: data.get("confirm_updated_context") === "yes"
+        });
+      } catch (error) {
+        toast(error.message, true);
+        return;
+      }
+      message = "Tarea completada";
     } else if (action === "transition") {
       payload = { ...base, status: data.get("status"), reason: data.get("reason").trim() }; message = "Estado actualizado";
     } else if (action === "comment") {
@@ -1040,7 +1174,16 @@
     } else if (action === "split") {
       apiAction = "split_ticket"; payload = { ...base, children: values(data.get("children"), /\n/).map((title) => ({ title, profile_id: ticket.profile_id || null })) }; message = "Tarea dividida";
     }
-    try { await mutate(apiAction, payload, message); app.drawerDirty = false; } catch (_) { /* toast already shown */ }
+    try {
+      await mutate(apiAction, payload, message, { drawerScope: completionScope });
+      if (completionScope && !isCurrentDrawer(completionScope)) return;
+      if (action === "complete") app.reviewDraft = null;
+      app.drawerDirty = false;
+    } catch (error) {
+      if (completionScope && !isCurrentDrawer(completionScope)) return;
+      if (action !== "complete" || !acceptanceRefreshConflict(error)) return;
+      await handleCompletionConflict(ticket, payload, completionScope);
+    }
   }
 
   function relationsSection(ticket) {
@@ -1055,9 +1198,25 @@
       section.append(node("h4", "", label));
       const list = node("div", "relation-list");
       items.forEach((item) => {
-        const row = node("div", "relation");
-        row.append(node("span", "", `${item.id} · ${item.title}`));
-        const open = node("button", "", "Abrir"); open.type = "button";
+        const row = node("details", "audit-details context-note");
+        row.append(node("summary", "", `${item.id} · ${item.title} · ${STATUS[item.status] || item.status} · rev. ${item.revision}`));
+        if (item.description) row.append(node("p", "", item.description));
+        const criteria = item.acceptance || [];
+        row.append(node("strong", "", "Criterios de aceptación"));
+        if (criteria.length) {
+          const criteriaList = node("ul", "");
+          criteria.forEach((criterion) => criteriaList.append(node("li", "", criterion)));
+          row.append(criteriaList);
+        } else row.append(node("p", "", "Sin criterios registrados."));
+        if (item.checkpoint) row.append(node("strong", "", "Último resumen"), node("p", "", item.checkpoint));
+        const evidence = item.evidence || [];
+        row.append(node("strong", "", "Evidencia registrada"));
+        if (evidence.length) {
+          const evidenceList = node("div", "evidence-list");
+          evidence.forEach((entry) => evidenceList.append(node("div", "evidence-item", `${entry.label || "Evidencia"} · ${entry.kind || "referencia"} · ${entry.uri || "Sin URI"}`)));
+          row.append(evidenceList);
+        } else row.append(node("p", "", "Sin evidencia registrada."));
+        const open = node("button", "button button-secondary button-small", "Abrir esta tarea"); open.type = "button";
         open.addEventListener("click", () => openTicket(item.id));
         row.append(open); list.append(row);
       });
@@ -1069,6 +1228,36 @@
     }
     if (ticket.blocked_reason) section.append(node("div", "context-note", `Motivo manual: ${ticket.blocked_reason}`));
     if (!groups.some(([, items]) => items.length) && !(ticket.blockers || []).length && !ticket.blocked_reason) section.append(node("div", "context-note", "Sin relaciones ni bloqueos."));
+    return section;
+  }
+
+  function sourceChecksSection() {
+    const section = drawerSection("Comprobaciones de fuentes");
+    const checks = app.context?.source_checks || [];
+    const page = app.context?.source_checks_page || {};
+    const total = Number.isInteger(page.total) ? page.total : checks.length;
+    section.append(node("div", "context-note", `Mostrando ${checks.length} de ${total} observaciones históricas. No demuestran que las fuentes sigan vigentes.`));
+    if (!checks.length) return section;
+    const list = node("div", "history-list");
+    checks.forEach((check) => {
+      const item = node("details", "audit-details context-note");
+      item.append(node("summary", "", `Comprobación #${check.check_id} · revisión observada ${check.ticket_revision}`));
+      item.append(node("p", "", `Snapshot: ${check.snapshot_id || "No indicado"}`));
+      item.append(node("p", "", `SHA-256 del informe: ${check.report_sha256 || "No indicado"}`));
+      if (typeof check.ticket_revision_matches_now === "boolean") {
+        item.append(node("p", "", check.ticket_revision_matches_now ? "La revisión observada coincide con la revisión actual." : "La revisión observada no coincide con la revisión actual."));
+      }
+      if (check.summary && typeof check.summary === "object") {
+        const labels = { total: "total", unchanged: "sin cambios", modified: "modificados", missing: "ausentes", uncheckable: "no comprobables" };
+        const parts = Object.keys(labels)
+          .filter((key) => Number.isInteger(check.summary[key]))
+          .map((key) => `${labels[key]}: ${check.summary[key]}`);
+        if (parts.length) item.append(node("p", "", `Resumen: ${parts.join(" · ")}`));
+      }
+      if (check.checked_at) item.append(node("time", "", `Comprobado: ${formatDate(check.checked_at)}`));
+      list.append(item);
+    });
+    section.append(list);
     return section;
   }
 

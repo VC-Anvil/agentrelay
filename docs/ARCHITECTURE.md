@@ -29,8 +29,12 @@ Child membership cannot be added to or removed from a closed parent without
 explicitly reopening that parent. Both ends of a move are checked in the child's
 transaction. This does not freeze historical child/dependency status: reopening
 existing work retains the parent's earlier acceptance. Revisions protect each
-addressed ticket, not the entire derived context graph, so reviewers must inspect
-current relationships and evidence before accepting.
+addressed ticket, not the entire derived context graph. Acceptance adds a required
+token of the context actually presented to the reviewer: the ticket, immediate
+children/dependencies and direct source-check observations. Its comparison occurs
+in the completion transaction, so a covered difference from the reviewed context produces a
+conflict. It does not recurse, verify external evidence or prove that a reviewer
+understood what was presented. See [acceptance context](ACCEPTANCE_CONTEXT.md).
 
 Plan imports validate and create the full graph in the same write transaction.
 `plan_requests` stores the actor, canonical payload hash and original result;

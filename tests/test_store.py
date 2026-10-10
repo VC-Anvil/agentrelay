@@ -133,11 +133,11 @@ class StoreTests(unittest.TestCase):
         submitted = self.store.action("submit_ticket", {"id": ticket["id"], "expected_revision": checkpoint["revision"],
                                                        "summary": "Ready for human review", "evidence": EVIDENCE}, "worker")
         self.assertEqual(submitted["status"], "review")
-        self.assert_error(409, "complete_ticket", {"id": ticket["id"], "expected_revision": submitted["revision"],
+        self.assert_error(409, "complete_ticket", {"expected_acceptance_context_token": self.store.context(ticket["id"])["acceptance_context"]["token"], "id": ticket["id"], "expected_revision": submitted["revision"],
                                                    "verification": "Checked", "accepted_criteria": ["Feature works", "Failure path checked"]}, "worker")
-        self.assert_error(409, "complete_ticket", {"id": ticket["id"], "expected_revision": submitted["revision"],
+        self.assert_error(409, "complete_ticket", {"expected_acceptance_context_token": self.store.context(ticket["id"])["acceptance_context"]["token"], "id": ticket["id"], "expected_revision": submitted["revision"],
                                                    "verification": "Checked", "accepted_criteria": ["Feature works"]})
-        done = self.store.action("complete_ticket", {"id": ticket["id"], "expected_revision": submitted["revision"],
+        done = self.store.action("complete_ticket", {"expected_acceptance_context_token": self.store.context(ticket["id"])["acceptance_context"]["token"], "id": ticket["id"], "expected_revision": submitted["revision"],
                                                      "verification": "Both behaviors observed in review",
                                                      "accepted_criteria": ["Feature works", "Failure path checked"]})
         self.assertEqual(done["status"], "done")
@@ -156,7 +156,7 @@ class StoreTests(unittest.TestCase):
         c = self.store.action("claim_ticket", {"id": child["id"], "expected_revision": 1, "assignee": "worker"})
         c = self.store.action("submit_ticket", {"id": child["id"], "expected_revision": c["revision"],
                                                 "summary": "Done", "evidence": EVIDENCE})
-        self.store.action("complete_ticket", {"id": child["id"], "expected_revision": c["revision"],
+        self.store.action("complete_ticket", {"expected_acceptance_context_token": self.store.context(child["id"])["acceptance_context"]["token"], "id": child["id"], "expected_revision": c["revision"],
                                              "verification": "Reviewed", "accepted_criteria": ["Child accepted"]})
         self.assertTrue(self.store.context(parent["id"])["ticket"]["ready"])
 
@@ -173,7 +173,7 @@ class StoreTests(unittest.TestCase):
         child = self.store.action("claim_ticket", {"id": child["id"], "expected_revision": 1, "assignee": "helper"})
         child = self.store.action("submit_ticket", {"id": child["id"], "expected_revision": child["revision"],
                                                     "summary": "Schema clarified", "evidence": EVIDENCE})
-        self.store.action("complete_ticket", {"id": child["id"], "expected_revision": child["revision"],
+        self.store.action("complete_ticket", {"expected_acceptance_context_token": self.store.context(child["id"])["acceptance_context"]["token"], "id": child["id"], "expected_revision": child["revision"],
                                              "verification": "Explanation reviewed",
                                              "accepted_criteria": ["La ayuda solicitada está documentada y revisada."]})
         blocked = self.store.context(parent["id"])["ticket"]

@@ -16,8 +16,19 @@ const TEST_EXPORT = `  globalThis.__agentRelayTest = {
     loadState,
     mutate,
     loadContext,
+    openTicket,
     closeTicket,
-    selectWorkspace
+    selectWorkspace,
+    acceptanceContextToken,
+    buildCompletionPayload,
+    handleCompletionConflict,
+    refreshCompletionContext,
+    acceptanceRefreshConflict,
+    captureDrawer,
+    isCurrentDrawer,
+    reviewDraftFor,
+    submitActionForm,
+    renderDrawer
   };
 })();`;
 
@@ -51,6 +62,8 @@ class FakeElement {
     this.open = false;
     this.required = false;
     this.title = "";
+    this.checked = false;
+    this.listeners = new Map();
     this._fallbackLastChild = { textContent: "" };
   }
   append(...items) { this.children.push(...items); }
@@ -58,7 +71,13 @@ class FakeElement {
   get lastChild() { return this.children.at(-1) || this._fallbackLastChild; }
   setAttribute(name, value) { this.attributes.set(name, String(value)); }
   getAttribute(name) { return this.attributes.get(name) ?? null; }
-  addEventListener() {}
+  addEventListener(name, listener) {
+    if (!this.listeners.has(name)) this.listeners.set(name, []);
+    this.listeners.get(name).push(listener);
+  }
+  async dispatch(name, event = {}) {
+    for (const listener of this.listeners.get(name) || []) await listener({ currentTarget: this, target: this, ...event });
+  }
   remove() {}
   reset() { this.value = ""; }
   close() { this.open = false; }
@@ -85,6 +104,19 @@ class FakeHeaders {
   forEach(callback) { this.values.forEach((value, key) => callback(value, key, this)); }
 }
 
+class FakeFormData {
+  constructor(form) { this.values = form.formValues || new Map(); }
+  get(name) {
+    const value = this.values.get(name);
+    return Array.isArray(value) ? (value[0] ?? null) : (value ?? null);
+  }
+  getAll(name) {
+    const value = this.values.get(name);
+    if (value === undefined || value === null) return [];
+    return Array.isArray(value) ? [...value] : [value];
+  }
+}
+
 function countOccurrences(source, needle) {
   let count = 0;
   let offset = 0;
@@ -93,6 +125,27 @@ function countOccurrences(source, needle) {
     offset += needle.length;
   }
   return count;
+}
+
+function treeText(element) {
+  if (!element) return "";
+  return [element.textContent || "", ...(element.children || []).map(treeText)].filter(Boolean).join(" ");
+}
+
+function findElement(element, predicate) {
+  if (!element) return null;
+  if (predicate(element)) return element;
+  for (const child of element.children || []) {
+    const match = findElement(child, predicate);
+    if (match) return match;
+  }
+  return null;
+}
+
+async function waitForCalls(transport, count) {
+  for (let attempt = 0; attempt < 20 && transport.calls.length < count; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
 }
 
 function createDocument() {
@@ -191,12 +244,46 @@ function context(workspaceId, title) {
   };
 }
 
+const OLD_TOKEN = `sha256:${"a".repeat(64)}`;
+const NEW_TOKEN = `sha256:${"b".repeat(64)}`;
+
+function reviewContext(workspaceId, token = OLD_TOKEN) {
+  const item = ticket("Revisión");
+  item.status = "review";
+  item.acceptance = ["Criterio A", "Criterio B"];
+  return {
+    workspace: { id: workspaceId },
+    ticket: item,
+    parent: null,
+    dependencies: [],
+    children: [],
+    events: [],
+    acceptance_context: token ? {
+      schema_version: 1,
+      token,
+      children_count: 0,
+      dependencies_count: 0,
+      source_checks_count: 0
+    } : undefined
+  };
+}
+
+function completionForm(token = OLD_TOKEN, verification = "Revisión pendiente") {
+  const form = new FakeElement("form");
+  form.dataset.acceptanceContextToken = token;
+  form.formValues = new Map([
+    ["verification", verification],
+    ["accepted_criteria", ["Criterio A"]]
+  ]);
+  return form;
+}
+
 function loadHarness() {
   const source = fs.readFileSync(APP_PATH, "utf8");
   const occurrences = countOccurrences(source, BOOTSTRAP);
   assert.equal(occurrences, 1, "No se encontró exactamente una vez el bootstrap final esperado de app.js");
   const instrumented = source.replace(BOOTSTRAP, TEST_EXPORT);
-  const { document } = createDocument();
+  const { document, byId } = createDocument();
   const transport = controlledFetch();
   const sandbox = {
     console,
@@ -212,6 +299,7 @@ function loadHarness() {
     clearInterval: () => {},
     URL,
     Blob,
+    FormData: FakeFormData,
     Intl,
     Date,
     JSON,
@@ -230,7 +318,7 @@ function loadHarness() {
   hooks.app.workspaceEpoch = 1;
   hooks.app.legacyWorkspace = false;
   hooks.app.state = state("a", "initial");
-  return { ...hooks, transport };
+  return { ...hooks, transport, byId };
 }
 
 async function oldGetCannotOverwriteMutation() {
@@ -318,11 +406,307 @@ async function mutationCapturesHeaderAndBlocksSwitch() {
   assert.equal(h.app.state.marker, "written-a");
 }
 
+function completionUsesPresentedToken() {
+  const h = loadHarness();
+  h.app.selectedId = "T-1";
+  h.app.context = reviewContext("a", NEW_TOKEN);
+  const payload = h.buildCompletionPayload(h.app.context.ticket, {
+    verification: "Comprobación conservada",
+    acceptedCriteria: ["Criterio A"],
+    acceptanceToken: OLD_TOKEN
+  });
+  assert.equal(payload.expected_acceptance_context_token, OLD_TOKEN, "se sustituyó silenciosamente el token presentado por el contexto más reciente");
+  assert.equal(payload.verification, "Comprobación conservada");
+}
+
+async function staleApiConflictPreservesDraftAndLoadsFreshContext() {
+  const h = loadHarness();
+  h.app.selectedId = "T-1";
+  h.app.context = reviewContext("a", OLD_TOKEN);
+  h.app.drawerDirty = true;
+  const ticketAtReview = h.app.context.ticket;
+  const form = new FakeElement("form");
+  form.dataset.acceptanceContextToken = OLD_TOKEN;
+  form.formValues = new Map([
+    ["verification", "Revisé la evidencia concreta"],
+    ["accepted_criteria", ["Criterio B"]]
+  ]);
+
+  const submission = h.submitActionForm({ preventDefault() {}, currentTarget: form }, "complete", ticketAtReview);
+  assert.equal(h.transport.calls.length, 1, "la aceptación no llegó a la API");
+  const sent = JSON.parse(h.transport.calls[0].options.body);
+  assert.equal(sent.data.expected_acceptance_context_token, OLD_TOKEN);
+  h.transport.respond(0, { error: "acceptance context changed; reread ticket context before completing" }, 409);
+  await waitForCalls(h.transport, 2);
+  assert.equal(h.transport.calls.length, 2, "el conflicto no solicitó contexto actualizado");
+  h.transport.respond(1, reviewContext("a", NEW_TOKEN));
+  await submission;
+
+  assert.equal(h.transport.calls.length, 2, "la aceptación se reenvió automáticamente tras recargar contexto");
+  assert.equal(h.app.context.acceptance_context.token, NEW_TOKEN);
+  const draft = h.reviewDraftFor(h.app.context.ticket);
+  assert.equal(draft.verification, "Revisé la evidencia concreta");
+  assert.deepEqual([...draft.acceptedCriteria], ["Criterio B"]);
+  assert.equal(draft.needsConfirmation, true);
+}
+
+function refreshedContextRequiresExplicitConfirmation() {
+  const h = loadHarness();
+  h.app.selectedId = "T-1";
+  h.app.context = reviewContext("a", NEW_TOKEN);
+  h.app.reviewDraft = {
+    workspaceId: "a",
+    workspaceEpoch: h.app.workspaceEpoch,
+    drawerEpoch: h.app.drawerEpoch,
+    ticketId: "T-1",
+    verification: "Borrador",
+    acceptedCriteria: ["Criterio A"],
+    needsConfirmation: true
+  };
+  const args = {
+    verification: "Borrador",
+    acceptedCriteria: ["Criterio A"],
+    acceptanceToken: NEW_TOKEN
+  };
+  assert.throws(() => h.buildCompletionPayload(h.app.context.ticket, args), /confirma de nuevo/);
+  const payload = h.buildCompletionPayload(h.app.context.ticket, { ...args, confirmed: true });
+  assert.equal(payload.expected_acceptance_context_token, NEW_TOKEN);
+}
+
+async function workspaceChangeDiscardsConflictRefreshAndDraft() {
+  const h = loadHarness();
+  h.app.selectedId = "T-1";
+  h.app.context = reviewContext("a", OLD_TOKEN);
+  const payload = h.buildCompletionPayload(h.app.context.ticket, {
+    verification: "Borrador de A",
+    acceptedCriteria: ["Criterio A"],
+    acceptanceToken: OLD_TOKEN
+  });
+  const refresh = h.handleCompletionConflict(h.app.context.ticket, payload);
+  assert.equal(h.transport.calls.length, 1);
+
+  const switchWorkspace = h.selectWorkspace("b");
+  assert.equal(h.transport.calls.length, 2);
+  h.transport.respond(1, state("b", "current-b"));
+  await switchWorkspace;
+  h.transport.respond(0, reviewContext("a", NEW_TOKEN));
+  assert.equal(await refresh, false);
+
+  assert.equal(h.app.workspaceId, "b");
+  assert.equal(h.app.reviewDraft, null, "el borrador del proyecto anterior sobrevivió al cambio");
+  assert.equal(h.app.context, null, "la recarga del conflicto anterior abrió contexto en el proyecto nuevo");
+}
+
+function legacyContextCannotBeAcceptedWithoutToken() {
+  const h = loadHarness();
+  h.app.legacyWorkspace = true;
+  h.app.selectedId = "T-1";
+  h.app.context = reviewContext("a", null);
+  assert.equal(h.acceptanceContextToken(), null);
+  assert.throws(() => h.buildCompletionPayload(h.app.context.ticket, {
+    verification: "No debe enviarse",
+    acceptedCriteria: ["Criterio A"],
+    acceptanceToken: ""
+  }), /huella de aceptación requerida/);
+}
+
+async function unrelated409DoesNotResetReview() {
+  const h = loadHarness();
+  h.app.selectedId = "T-1";
+  h.app.context = reviewContext("a", OLD_TOKEN);
+  h.app.drawerDirty = true;
+  const form = new FakeElement("form");
+  form.dataset.acceptanceContextToken = OLD_TOKEN;
+  form.formValues = new Map([
+    ["verification", "Borrador intacto"],
+    ["accepted_criteria", ["Criterio A"]]
+  ]);
+  const submission = h.submitActionForm({ preventDefault() {}, currentTarget: form }, "complete", h.app.context.ticket);
+  h.transport.respond(0, { error: "assignee cannot review own work" }, 409);
+  await submission;
+  assert.equal(h.transport.calls.length, 1, "un 409 ajeno al contexto inició una recarga");
+  assert.equal(h.app.reviewDraft, null, "un 409 ajeno al contexto creó un borrador de reconfirmación");
+  assert.equal(h.app.drawerDirty, true, "un 409 ajeno al contexto descartó el formulario abierto");
+  assert.equal(h.acceptanceRefreshConflict({ status: 409, message: "assignee cannot review own work" }), false);
+}
+
+async function failedConflictRefreshCanBeRetried() {
+  const h = loadHarness();
+  h.app.selectedId = "T-1";
+  h.app.context = reviewContext("a", OLD_TOKEN);
+  const payload = h.buildCompletionPayload(h.app.context.ticket, {
+    verification: "Borrador recuperable",
+    acceptedCriteria: ["Criterio B"],
+    acceptanceToken: OLD_TOKEN
+  });
+  const firstRefresh = h.handleCompletionConflict(h.app.context.ticket, payload);
+  h.transport.calls[0].reject(new Error("sin conexión"));
+  assert.equal(await firstRefresh, false);
+  assert.equal(h.app.reviewDraft.refreshRequired, true);
+  const body = h.byId("drawer-body");
+  assert.match(treeText(body), /Reintentar carga de contexto/);
+  const verification = findElement(body, (element) => element.name === "verification");
+  const criterionA = findElement(body, (element) => element.name === "accepted_criteria" && element.value === "Criterio A");
+  const criterionB = findElement(body, (element) => element.name === "accepted_criteria" && element.value === "Criterio B");
+  const retryButton = findElement(body, (element) => element.textContent === "Reintentar carga de contexto");
+  verification.value = "Borrador editado antes del retry";
+  criterionA.checked = true;
+  criterionB.checked = false;
+
+  const retry = retryButton.dispatch("click");
+  assert.equal(h.transport.calls.length, 2);
+  assert.equal(verification.disabled, true, "la verificación quedó editable durante el GET de retry");
+  assert.equal(criterionA.disabled, true, "los criterios quedaron editables durante el GET de retry");
+  h.transport.respond(1, reviewContext("a", NEW_TOKEN));
+  await retry;
+  assert.equal(h.app.reviewDraft.refreshRequired, false);
+  assert.equal(h.app.reviewDraft.verification, "Borrador editado antes del retry");
+  assert.deepEqual([...h.app.reviewDraft.acceptedCriteria], ["Criterio A"]);
+  assert.match(treeText(h.byId("drawer-body")), /He revisado el contexto actualizado/);
+  const refreshedVerification = findElement(h.byId("drawer-body"), (element) => element.name === "verification");
+  assert.equal(refreshedVerification.value, "Borrador editado antes del retry");
+}
+
+function renderedReviewShowsCoveredMaterial() {
+  const h = loadHarness();
+  h.app.selectedId = "T-1";
+  const value = reviewContext("a", OLD_TOKEN);
+  const related = {
+    ...ticket("Hija detallada"),
+    id: "T-2",
+    revision: 7,
+    status: "done",
+    description: "Descripción inspeccionable",
+    acceptance: ["Criterio relacionado visible"],
+    checkpoint: "Resumen relacionado visible",
+    evidence: [{ kind: "informe", label: "Evidencia relacionada", uri: "fixture://evidencia" }]
+  };
+  value.children = [related];
+  value.dependencies = [{ ...related, id: "T-3", title: "Dependencia detallada" }];
+  value.acceptance_context.children_count = 1;
+  value.acceptance_context.dependencies_count = 1;
+  value.acceptance_context.source_checks_count = 4;
+  value.source_checks = [1, 2, 3].map((id) => ({
+    check_id: id,
+    ticket_revision: 1,
+    ticket_revision_matches_now: true,
+    snapshot_id: `sha256:${String(id).repeat(64)}`,
+    report_sha256: String(id + 3).repeat(64),
+    summary: { total: 2, unchanged: 1, modified: 1, missing: 0, uncheckable: 0 },
+    checked_at: "2026-10-10T10:00:00Z"
+  }));
+  value.source_checks_page = { total: 4, count: 3, limit: 3, next_before_id: 1 };
+  h.app.context = value;
+  h.renderDrawer();
+  const text = treeText(h.byId("drawer-body"));
+  for (const expected of [
+    "T-2 · Hija detallada · Hecha · rev. 7",
+    "Descripción inspeccionable",
+    "Criterio relacionado visible",
+    "Resumen relacionado visible",
+    "Evidencia relacionada · informe · fixture://evidencia",
+    "Mostrando 3 de 4 observaciones históricas",
+    "Comprobación #1 · revisión observada 1",
+    `Snapshot: sha256:${"3".repeat(64)}`,
+    `SHA-256 del informe: ${"6".repeat(64)}`,
+    "modificados: 1"
+  ]) assert.ok(text.includes(expected), `no se renderizó material cubierto: ${expected}`);
+}
+
+async function completionSuccessCannotOverwriteAnotherDrawer() {
+  const h = loadHarness();
+  h.app.selectedId = "T-1";
+  h.app.context = reviewContext("a", OLD_TOKEN);
+  const submission = h.submitActionForm({ preventDefault() {}, currentTarget: completionForm() }, "complete", h.app.context.ticket);
+  assert.equal(h.transport.calls.length, 1);
+
+  h.openTicket("T-2");
+  const contextB = reviewContext("a", NEW_TOKEN);
+  contextB.ticket.id = "T-2";
+  contextB.ticket.title = "Formulario B";
+  h.transport.respond(1, contextB);
+  await new Promise((resolve) => setImmediate(resolve));
+  h.app.drawerDirty = true;
+  const preserved = h.app.context;
+
+  const doneA = { ...ticket("A completada"), status: "done", revision: 2 };
+  const stateB = { ...contextB.ticket };
+  h.transport.respond(0, { result: doneA, state: state("a", "completion-a", [doneA, stateB]) });
+  await submission;
+
+  assert.equal(h.transport.calls.length, 2, "la completión A recargó el drawer B");
+  assert.equal(h.app.selectedId, "T-2");
+  assert.equal(h.app.context, preserved, "la completión A sustituyó el contexto B");
+  assert.equal(h.app.drawerDirty, true, "la completión A limpió el formulario B");
+  assert.equal(h.app.reviewDraft, null);
+  assert.equal(h.app.state.marker, "completion-a", "el tablero no adoptó el estado confirmado");
+}
+
+async function completion409CannotInstallDraftInAnotherDrawer() {
+  const h = loadHarness();
+  h.app.selectedId = "T-1";
+  h.app.context = reviewContext("a", OLD_TOKEN);
+  const submission = h.submitActionForm({ preventDefault() {}, currentTarget: completionForm() }, "complete", h.app.context.ticket);
+
+  h.openTicket("T-2");
+  const contextB = reviewContext("a", NEW_TOKEN);
+  contextB.ticket.id = "T-2";
+  contextB.ticket.title = "Formulario B tras conflicto";
+  h.transport.respond(1, contextB);
+  await new Promise((resolve) => setImmediate(resolve));
+  h.app.drawerDirty = true;
+  const preserved = h.app.context;
+
+  h.transport.respond(0, { error: "acceptance context changed; reread ticket context before completing" }, 409);
+  await submission;
+  assert.equal(h.transport.calls.length, 2, "el 409 de A recargó el drawer B");
+  assert.equal(h.app.context, preserved);
+  assert.equal(h.app.drawerDirty, true);
+  assert.equal(h.app.reviewDraft, null, "el 409 de A instaló un borrador en B");
+}
+
+async function completionCannotOverwriteReopenedSameTicket() {
+  const h = loadHarness();
+  h.app.selectedId = "T-1";
+  h.app.context = reviewContext("a", OLD_TOKEN);
+  const originalEpoch = h.app.drawerEpoch;
+  const submission = h.submitActionForm({ preventDefault() {}, currentTarget: completionForm() }, "complete", h.app.context.ticket);
+
+  h.closeTicket();
+  h.openTicket("T-1");
+  assert.notEqual(h.app.drawerEpoch, originalEpoch);
+  const reopened = reviewContext("a", NEW_TOKEN);
+  reopened.ticket.title = "A reabierta en otra instancia";
+  h.transport.respond(1, reopened);
+  await new Promise((resolve) => setImmediate(resolve));
+  h.app.drawerDirty = true;
+  const preserved = h.app.context;
+
+  const doneA = { ...ticket("A completada"), status: "done", revision: 2 };
+  h.transport.respond(0, { result: doneA, state: state("a", "completion-a", [doneA]) });
+  await submission;
+  assert.equal(h.transport.calls.length, 2, "la completión antigua recargó la nueva instancia de A");
+  assert.equal(h.app.context, preserved);
+  assert.equal(h.app.drawerDirty, true);
+  assert.equal(h.app.reviewDraft, null);
+}
+
 const tests = [
   ["GET antiguo no sobrescribe una mutación", oldGetCannotOverwriteMutation],
   ["cerrar y reabrir descarta contexto antiguo", closeAndReopenRejectsOldContext],
   ["cambiar de proyecto descarta respuestas antiguas", workspaceChangeRejectsOldResponses],
-  ["mutación captura cabecera y bloquea cambio", mutationCapturesHeaderAndBlocksSwitch]
+  ["mutación captura cabecera y bloquea cambio", mutationCapturesHeaderAndBlocksSwitch],
+  ["la aceptación usa el token presentado", completionUsesPresentedToken],
+  ["el conflicto API conserva borrador y carga contexto", staleApiConflictPreservesDraftAndLoadsFreshContext],
+  ["el contexto renovado exige reconfirmación", refreshedContextRequiresExplicitConfirmation],
+  ["cambiar proyecto descarta recarga y borrador de conflicto", workspaceChangeDiscardsConflictRefreshAndDraft],
+  ["un contexto heredado sin token no se puede aceptar", legacyContextCannotBeAcceptedWithoutToken],
+  ["un 409 ajeno al contexto conserva el formulario", unrelated409DoesNotResetReview],
+  ["una recarga fallida de contexto se puede reintentar", failedConflictRefreshCanBeRetried],
+  ["la revisión muestra relaciones y source checks cubiertos", renderedReviewShowsCoveredMaterial],
+  ["el éxito de A no sobrescribe el drawer B", completionSuccessCannotOverwriteAnotherDrawer],
+  ["el 409 de A no instala borrador en B", completion409CannotInstallDraftInAnotherDrawer],
+  ["una completión antigua no sobrescribe A reabierta", completionCannotOverwriteReopenedSameTicket]
 ];
 
 (async () => {

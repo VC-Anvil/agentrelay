@@ -68,7 +68,7 @@ class AcceptanceUpdateTests(unittest.TestCase):
                     self.assert_rejected_without_changes(expanded, {
                         "expected_revision": expanded["revision"],
                         "acceptance": ["Original criterion"]}, "agent:owner")
-                    completed = self.store.action("complete_ticket", {"id": ticket["id"],
+                    completed = self.store.action("complete_ticket", {"expected_acceptance_context_token": self.store.context(ticket["id"])["acceptance_context"]["token"], "id": ticket["id"],
                         "expected_revision": expanded["revision"], "verification": "Both criteria checked",
                         "accepted_criteria": ["Original criterion", "New criterion"]}, "agent:reviewer")
                     self.assertEqual(completed["status"], "done")

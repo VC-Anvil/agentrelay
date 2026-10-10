@@ -69,7 +69,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
         self.assertNotIn("command", state["execution"]["workers"][0])
         ticket = state["tickets"][0]
         self.assertEqual(ticket["status"], "review")
-        status, response = self.action("complete_ticket", {"id": ticket["id"], "expected_revision": ticket["revision"],
+        status, response = self.action("complete_ticket", {"expected_acceptance_context_token": self.store.context(ticket["id"])["acceptance_context"]["token"], "id": ticket["id"], "expected_revision": ticket["revision"],
             "verification": "Independently checked fixture response", "accepted_criteria": ticket["acceptance"]})
         self.assertEqual(status, 200, response)
         exported = self.request("GET", "/api/export")[1]

@@ -39,7 +39,7 @@ def closed_scope_fixture(store: Store) -> tuple[dict, dict, dict]:
         "id": parent["id"], "expected_revision": parent["revision"],
         "summary": "Fixture parent delivered", "evidence": EVIDENCE,
     }, "agent:author")
-    parent = store.action("complete_ticket", {
+    parent = store.action("complete_ticket", {"expected_acceptance_context_token": store.context(parent["id"])["acceptance_context"]["token"],
         "id": parent["id"], "expected_revision": parent["revision"],
         "verification": "Fixture scope reviewed", "accepted_criteria": ACCEPTANCE,
     }, "agent:reviewer")

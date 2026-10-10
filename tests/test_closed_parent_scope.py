@@ -32,7 +32,7 @@ class ClosedParentScopeTests(unittest.TestCase):
             parent = self.store.action("submit_ticket", {"id": parent["id"],
                 "expected_revision": parent["revision"], "summary": "Scope delivered",
                 "evidence": EVIDENCE}, "agent:owner")
-            parent = self.store.action("complete_ticket", {"id": parent["id"],
+            parent = self.store.action("complete_ticket", {"expected_acceptance_context_token": self.store.context(parent["id"])["acceptance_context"]["token"], "id": parent["id"],
                 "expected_revision": parent["revision"], "verification": "Scope reviewed",
                 "accepted_criteria": ["Scope checked"]}, "agent:reviewer")
         else:
