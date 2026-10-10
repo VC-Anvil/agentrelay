@@ -87,14 +87,20 @@ def main():
     overview.add_argument("--workspaces", type=Path, required=True, help="Explicit trusted project registry")
     overview.add_argument("--limit", type=int, default=5, help="Tickets per category in each project (1..20)")
     for name in ("serve", "mcp", "export", "run", "runs", "run-result", "backup", "action",
+                 "action-receipt",
                  "context", "history", "check-sources", "source-checks", "source-check"):
         command = sub.add_parser(name)
         command.add_argument("--db", type=Path, required=name in {
-            "check-sources", "source-checks", "source-check"
+            "action-receipt", "check-sources", "source-checks", "source-check"
         }, help="SQLite database shared by web and MCP")
         if name == "action":
             command.add_argument("--input", type=Path, required=True, help="UTF-8 JSON file containing action and data")
             command.add_argument("--actor", required=True, help="Audit identity; local declaration, not authentication")
+        if name == "action-receipt":
+            command.add_argument("--actor", required=True,
+                                 help="Local identity used by the original action")
+            command.add_argument("--request-id", required=True,
+                                 help="Exact ticket-action request ID")
         if name in {"context", "history"}:
             command.add_argument("--ticket", required=True)
         if name == "context":
@@ -236,6 +242,14 @@ def main():
             parser.exit(1, f"Action input: {exc}\n")
         if not args.actor.strip():
             parser.error("--actor must be a nonempty identity")
+    validated_receipt_query = None
+    if args.command == "action-receipt":
+        try:
+            from .store import validate_action_receipt_query
+            validated_receipt_query = validate_action_receipt_query(
+                args.request_id, actor=args.actor)
+        except DomainError as exc:
+            parser.exit(1, f"Action receipt ({exc.status}): {exc}\n")
     if args.command == "mcp" and (not args.actor.startswith("agent:") or not args.actor[6:].strip()):
         # Reject an invalid identity before a default or explicit database path can be initialized.
         parser.error("--actor must be a nonempty agent:<name> identity")
@@ -248,7 +262,7 @@ def main():
     ))
     requires_existing = args.command in {
         "context", "history", "export", "runs", "run-result", "backup", "run",
-        "check-sources", "source-checks", "source-check",
+        "action-receipt", "check-sources", "source-checks", "source-check",
     } or (args.command == "action" and not action_bootstraps)
     try:
         # Store/the read preflight inspect the selected path before resolving it, including symlinks.
@@ -280,10 +294,14 @@ def main():
             print(json.dumps(result, ensure_ascii=False, indent=2))
         except (DomainError, OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
             parser.exit(1, f"{exc}\n")
-    elif args.command in {"action", "context", "history", "runs", "run-result"}:
+    elif args.command in {"action", "action-receipt", "context", "history", "runs", "run-result"}:
         try:
             if args.command == "action":
                 result = store.action(request["action"], request["data"], args.actor)
+            elif args.command == "action-receipt":
+                result = store.get_action_receipt(
+                    validated_receipt_query["request_id"],
+                    actor=validated_receipt_query["actor"])
             elif args.command == "run-result":
                 from .run_results import get_run_result
                 result = get_run_result(store, args.run_id)
@@ -297,7 +315,13 @@ def main():
                 result = store.context(args.ticket, event_limit=None if args.all_events else args.event_limit)
             print(json.dumps(result, ensure_ascii=False, indent=2))
         except DomainError as exc:
+            if args.command == "action-receipt":
+                parser.exit(1, f"Action receipt ({exc.status}): {exc}\n")
             parser.exit(1, f"{exc}\n")
+        except (OSError, RuntimeError, sqlite3.Error) as exc:
+            if args.command == "action-receipt":
+                parser.exit(1, f"Action receipt: {exc}\n")
+            raise
     elif args.command == "serve":
         from .server import serve
         from .execution import ExecutionManager

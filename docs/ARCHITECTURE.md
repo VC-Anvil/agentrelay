@@ -53,6 +53,15 @@ external comparison to close the intervening write race. Every writer must be
 upgraded for these guards to hold across all operations. See
 [ticket action receipts](ACTION_RECEIPTS.md) for limits and transport examples.
 
+`get_action_receipt` reads one actor-scoped ticket-action receipt in a SQLite
+snapshot without dispatching an action. Result size is checked before its body
+is loaded; invalid stored data fails with a controlled error. The response omits
+the write API's `replayed` flag and does not combine an old result with current
+ticket state. A read that sees no receipt can precede the original writer's
+commit. Clients must not turn that observation into an automatic retry. Opening
+the project still follows the usual initialization/migration contract; this is
+not a new filesystem read-only mode. See [lookup semantics](ACTION_RECEIPT_LOOKUP.md).
+
 ## Projects and captured inputs
 
 A trusted startup registry maps project IDs to existing databases and optional

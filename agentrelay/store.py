@@ -129,6 +129,52 @@ def validate_ticket_action_request(data: dict) -> dict:
             "intent_sha256": hashlib.sha256(intent_bytes).hexdigest()}
 
 
+def validate_action_receipt_query(request_id, *, actor) -> dict:
+    """Validate and normalize a historical receipt lookup without touching a DB."""
+    if (type(request_id) is not str or not request_id
+            or request_id != request_id.strip() or len(request_id) > 128):
+        raise DomainError("request_id must be a nonempty string up to 128 characters without surrounding whitespace")
+    normalized_actor = _nonempty(actor, "actor")
+    try:
+        request_id.encode("utf-8")
+        normalized_actor.encode("utf-8")
+    except UnicodeError as exc:
+        raise DomainError("request_id and actor must be valid UTF-8") from exc
+    return {"request_id": request_id, "actor": normalized_actor}
+
+
+def _stored_action_result(value):
+    """Decode a bounded historical result without trusting modified SQLite text."""
+    if type(value) is not str:
+        raise DomainError("stored ticket action receipt is invalid", 500)
+
+    def reject_constant(_value):
+        raise ValueError("non-finite JSON constant")
+
+    try:
+        result = json.loads(value, parse_constant=reject_constant)
+        if type(result) is not dict:
+            raise ValueError("result is not an object")
+        pending = [(iter(result.values()), 1)]
+        while pending:
+            siblings, depth = pending[-1]
+            if depth > MAX_ACTION_INTENT_DEPTH:
+                raise ValueError("result exceeds JSON depth")
+            try:
+                child = next(siblings)
+            except StopIteration:
+                pending.pop()
+                continue
+            if type(child) in (dict, list):
+                values = child.values() if type(child) is dict else child
+                pending.append((iter(values), depth + 1))
+        # json.loads permits lone surrogate escapes; the response must be UTF-8.
+        json.dumps(result, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
+        raise DomainError("stored ticket action receipt is invalid", 500) from exc
+    return result
+
+
 def _nonempty(value, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise DomainError(f"{field} must be a nonempty string")
@@ -1082,6 +1128,51 @@ class Store:
             raise DomainError("actor must be valid UTF-8") from exc
         with self._write() as db:
             return self._apply_ticket_action(db, intent, actor)
+
+    def get_action_receipt(self, request_id, *, actor) -> dict:
+        """Read a committed ticket-action result without replaying the action."""
+        query = validate_action_receipt_query(request_id, actor=actor)
+        request_id, actor = query["request_id"], query["actor"]
+        try:
+            with self._connection() as db:
+                db.execute("BEGIN")
+                table = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                                   "AND name='action_requests'").fetchone()
+                if table is None:
+                    raise DomainError("ticket action receipt not found", 404)
+                row = db.execute(
+                    "SELECT request_id,action,actor,committed_at,"
+                    "length(CAST(result_json AS BLOB)) AS result_bytes "
+                    "FROM action_requests WHERE request_id=? AND actor=?",
+                    (request_id, actor)).fetchone()
+                if row is None:
+                    raise DomainError("ticket action receipt not found", 404)
+                if (type(row["result_bytes"]) is not int
+                        or row["result_bytes"] > MAX_ACTION_RESULT_BYTES):
+                    raise DomainError("stored ticket action receipt is invalid", 500)
+                if (row["request_id"] != request_id or row["actor"] != actor
+                        or row["action"] not in TICKET_ACTIONS
+                        or type(row["committed_at"]) is not str
+                        or not row["committed_at"].strip()
+                        or len(row["committed_at"]) > 64):
+                    raise DomainError("stored ticket action receipt is invalid", 500)
+                for field in ("request_id", "action", "actor", "committed_at"):
+                    try:
+                        row[field].encode("utf-8")
+                    except (AttributeError, UnicodeError) as exc:
+                        raise DomainError("stored ticket action receipt is invalid", 500) from exc
+                stored = db.execute(
+                    "SELECT result_json FROM action_requests WHERE request_id=? AND actor=?",
+                    (request_id, actor)).fetchone()
+                result = _stored_action_result(stored["result_json"])
+                response = {"schema_version": 1, "receipt": {
+                    "request_id": request_id, "action": row["action"], "actor": actor,
+                    "committed_at": row["committed_at"], "result": result,
+                }}
+                db.commit()
+                return response
+        except sqlite3.Error as exc:
+            raise DomainError("stored ticket action receipt is invalid", 500) from exc
 
     def _apply_ticket_action(self, db, intent: dict, actor: str) -> dict:
         request_id = intent["request_id"]

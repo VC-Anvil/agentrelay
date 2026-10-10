@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 from . import __version__
 from .store import DomainError, Store
@@ -143,16 +144,39 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    @staticmethod
+    def _action_receipt_query(raw_query: str) -> str:
+        if (not raw_query or not raw_query.isascii()
+                or re.search(r"%(?![0-9A-Fa-f]{2})", raw_query)):
+            raise DomainError("Se requiere un request_id UTF-8 codificado correctamente.")
+        try:
+            pairs = parse_qsl(raw_query, keep_blank_values=True, strict_parsing=True,
+                              encoding="utf-8", errors="strict", max_num_fields=2)
+        except (UnicodeError, ValueError) as exc:
+            raise DomainError("Consulta de recibo inválida.") from exc
+        if len(pairs) != 1 or pairs[0][0] != "request_id":
+            raise DomainError("Se requiere exactamente un parámetro request_id.")
+        return pairs[0][1]
+
     def do_GET(self):
         if not self._host_ok():
             return
-        path = unquote(urlsplit(self.path).path)
+        target = urlsplit(self.path)
+        path = unquote(target.path)
         try:
             if path == "/api/health":
                 self._json(200, {"status": "ok", "version": __version__})
             elif path == "/api/workspaces":
                 self._json(200, {"workspaces": [w.public() for w in self.server.workspaces.values()],
                                  "default_workspace_id": self.server.default_workspace_id})
+            elif path == "/api/action-receipts":
+                identities = self.headers.get_all("X-AgentRelay-Workspace", [])
+                if len(identities) != 1 or not identities[0]:
+                    raise DomainError("Selecciona un espacio con X-AgentRelay-Workspace.")
+                request_id = self._action_receipt_query(target.query)
+                workspace = self.server.workspace(identities[0])
+                result = workspace.store.get_action_receipt(request_id, actor="human")
+                self._json(200, {**result, "workspace": workspace.public()})
             elif path == "/api/state":
                 self._json(200, self.server.snapshot(self.headers.get("X-AgentRelay-Workspace")))
             elif path == "/api/export":

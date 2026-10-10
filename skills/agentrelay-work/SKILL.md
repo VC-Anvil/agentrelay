@@ -33,7 +33,22 @@ can ignore extra fields. The new wrapper requires AgentRelay 0.19 or later and
 older versions reject it before writing. If unavailable, report that durable
 recovery is unavailable rather than silently substituting an unkeyed write.
 
-An uncertain response permits an explicit retry with the exact original key,
+After an uncertain response, prefer the read-only MCP `get_action_receipt(request_id)`
+when advertised by the connection. The authorized CLI equivalent is
+`action-receipt --db EXACT_DATABASE --actor ORIGINAL_ACTOR --request-id ORIGINAL_KEY`.
+It returns `{schema_version:1,receipt:{request_id,action,actor,committed_at,result}}`
+without resending the action. The receipt is historical; there is no `replayed`
+flag or current context. Read current ticket context before deciding new work.
+Do not supply another actor or switch databases merely to obtain a matching key.
+
+A 404 means no matching receipt was visible to that read, not that the original
+write failed: a writer may still commit afterward. Preserve the original request
+and resolve in-flight work; never turn absence into an automatic POST, new key or
+unkeyed retry. An old server without this tool is unsupported, not proof of an
+absent receipt. The lookup requires 0.20 or later and only covers ticket-action
+receipts. It does not grant permission to repeat or accept work.
+
+An uncertain response also permits an explicit retry with the exact original key,
 actor and payload in the same database. A successful response is a receipt with
 `result`, `committed_at` and `replayed`; replay retrieves the original result
 without another effect. Fetch current context before any new decision. A receipt

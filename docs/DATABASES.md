@@ -31,6 +31,7 @@ The query and backup commands keep the same existing-database preflight:
 - `history`
 - `runs`
 - `run-result`
+- `action-receipt` (requires explicit `--db`, `--actor` and `--request-id`)
 - `export`
 - `backup`
 

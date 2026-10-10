@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentrelay-local"
-version = "0.19.0"
+version = "0.20.0"
 description = "Local-first ticket coordination, durable handoffs and evidence-based delivery for AI agents."
 readme = "README.md"
 requires-python = ">=3.11"

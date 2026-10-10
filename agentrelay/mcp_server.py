@@ -40,7 +40,9 @@ def create_mcp(store: Store, actor: str) -> FastMCP:
         "Use current revision for every mutation. Claim records the actual model/effort supplied "
         "by your host; recommended settings are not proof of availability. Use claim_next_ticket "
         "only after reading and authorizing every supplied candidate; preserve claim_ticket when "
-        "the user chose a specific task. An exact request replay returns a historical receipt, "
+        "the user chose a specific task. get_action_receipt reads a historical keyed result "
+        "without replaying its write; absence does not prove an in-flight write will not commit. "
+        "An exact request replay returns a historical receipt, "
         "so fetch fresh context before work. Checkpoint before "
         "handoff, request help with diagnostic evidence, submit results for independent review. "
         "A retained run result is a proposal, not an applied or accepted deliverable; after a "
@@ -127,6 +129,20 @@ def create_mcp(store: Store, actor: str) -> FastMCP:
             raise ValueError("event_limit must be an integer from 1 to 100")
         try:
             return store.context(ticket_id, event_limit=event_limit)
+        except DomainError as exc:
+            raise ValueError(f"{exc.status}: {exc}") from exc
+
+    @server.tool(annotations=read)
+    def get_action_receipt(request_id: str) -> dict:
+        """Read this connection actor's committed ticket-action receipt.
+
+        The result is historical and does not replay the write. A 404 is only an
+        observation: the original request may still be in flight, may belong to a
+        different actor/project, or may predate receipts. Never auto-post, claim or
+        approve from this lookup; fetch current ticket context before new work.
+        """
+        try:
+            return store.get_action_receipt(request_id, actor=actor)
         except DomainError as exc:
             raise ValueError(f"{exc.status}: {exc}") from exc
 

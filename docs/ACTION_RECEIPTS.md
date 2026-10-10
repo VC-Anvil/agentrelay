@@ -126,7 +126,10 @@ Profile changes, seeding and worker launch/cancellation are excluded. A database
 receipt cannot make an external process or filesystem comparison atomic.
 
 After a 500, connection failure or malformed response, the outcome may be
-committed. Preserve the exact original request and choose an explicit retry with
+committed. Since 0.20, [read-only receipt lookup](ACTION_RECEIPT_LOOKUP.md) can
+recover a visible receipt without resending the write; absence does not rule out
+an original request still in flight. Preserve the exact original request. If
+you choose an explicit retry, use
 its original key. There is no automatic repost or worker execution. A 4xx rejects
 that attempt; it does not erase any earlier receipt under the key. After a 409,
 inspect the conflict and current context rather than generating a new key merely
