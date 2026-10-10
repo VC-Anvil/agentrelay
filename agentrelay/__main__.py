@@ -68,6 +68,18 @@ def main():
     compare = sub.add_parser("compare-snapshot", help="Compare captured inputs with an explicit current source root")
     compare.add_argument("directory", type=Path)
     compare.add_argument("--root", type=Path, required=True)
+    snapshot_diff = sub.add_parser(
+        "diff-snapshots", help="Compare two verified historical input snapshots")
+    snapshot_diff.add_argument("--before", type=_source_path, required=True,
+                               help="Earlier captured input directory")
+    snapshot_diff.add_argument("--after", type=_source_path, required=True,
+                               help="Later captured input directory")
+    snapshot_diff.add_argument("--expected-before-id", type=_source_snapshot_id, required=True,
+                               help="Exact lowercase sha256 identity of the earlier snapshot")
+    snapshot_diff.add_argument("--expected-after-id", type=_source_snapshot_id, required=True,
+                               help="Exact lowercase sha256 identity of the later snapshot")
+    snapshot_diff.add_argument("--file", action="append", dest="files",
+                               help="Canonical relative path to compare; repeat to select several")
     report = sub.add_parser("verify-report", help="Compare a fixed report with its adjacent host receipt")
     report.add_argument("directory", type=Path, help="Directory containing receipt.json and report.md")
     report.add_argument("--receipt-sha256", help="Previously trusted SHA-256 anchor for receipt.json")
@@ -146,6 +158,21 @@ def main():
             parser.exit(1, f"Report verification failed: {exc}\n")
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if result["status"] != "unchanged":
+            raise SystemExit(2)
+        return
+    if args.command == "diff-snapshots":
+        from .snapshot_diff import diff_snapshots
+        try:
+            result = diff_snapshots(
+                args.before, args.after,
+                expected_before_id=args.expected_before_id,
+                expected_after_id=args.expected_after_id,
+                paths=args.files,
+            )
+        except (ValueError, OSError) as exc:
+            parser.exit(1, f"Snapshot diff failed: {exc}\n")
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if any(result["summary"][key] for key in ("modified", "added", "removed")):
             raise SystemExit(2)
         return
     if args.command == "overview":

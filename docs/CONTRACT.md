@@ -178,6 +178,16 @@ replay exits 0 regardless of advisory findings. CLI `source-checks` and
 only. There is no HTTP/MCP write action that accepts a source path or report.
 See [full source-check contract](SOURCE_CHECKS.md).
 
+Python `agentrelay.snapshot_diff.diff_snapshots(before, after, *,
+expected_before_id, expected_after_id, paths=None)` compares two explicitly
+identified, verified captures without opening a database or following their
+historical source roots. The local `diff-snapshots` CLI exposes the same operation;
+it is not an HTTP/MCP filesystem tool. File states are unchanged, modified, added
+and removed; structured hunks preserve text and line endings with zero-based line
+indices. Computational and output limits omit an entire file's text explicitly,
+while retaining its byte comparison. A report is review context, not a patch or
+an automatic task update. See [exact fields, bounds and exits](SNAPSHOT_DIFF.md).
+
 `Store(path)` initializes schema only, no demo by default. `state()`, `context(ticket_id)`, `export()`, `action(action, data, actor='human')`. `DomainError(message, status=400)` has .status. `seed_demo()` explicit idempotent method. Store connections per operation, concurrent safe. Standard-library only.
 
 CLI `verify-report DIRECTORY [--receipt-sha256 HASH]` and Python

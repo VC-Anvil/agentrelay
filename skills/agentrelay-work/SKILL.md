@@ -68,6 +68,21 @@ uncertain response and use a new request ID to measure again. Receipt IDs share
 the project namespace with plans and scoped claims. Do not weaken execution
 policy, replace frozen inputs or imply that the check invalidates prior acceptance.
 
+When a changed document may alter the next task, and two authorized frozen
+captures are available, use the local `diff-snapshots --before BEFORE --after
+AFTER --expected-before-id ID --expected-after-id ID` command. Optional repeated
+`--file` selectors narrow the comparison. It reads those captures only and does
+not follow their historical source roots or document links. Its structured hunks
+use zero-based line indices and preserve LF, CRLF and missing final newlines;
+they are review context, not an executable patch. Inspect `diff.status` and
+`reason`: binary, decoding, computation or output limits can omit text even
+when hashes establish a change. Exit 2 with valid JSON means selected files
+changed; usage errors also exit 2 without a report. Compare both exact snapshot
+identities and distinguish raw documents from derived excerpts before proposing
+follow-up. New documentation can supersede a task suggestion without invalidating
+the historical review. The command does not update tickets or grant permission
+to resume work.
+
 ## Create a plan
 
 Use `create_plan` when the authorized outcome needs a coherent graph rather than many independent ticket calls. Give the request a stable `request_id`. Entries default to `backlog`; set `status: queued` only when work should become eligible after its dependencies. Each entry has a unique `key`; `parent_key` and `depends_on_keys` may point forward within the same request, while `parent_id` and `depends_on` refer to existing tickets.
