@@ -66,6 +66,9 @@ Invalid Unicode and non-JSON Python types produce controlled errors. Depth is
 bounded explicitly rather than relying on an interpreter's recursion limit.
 The first domain run also exposed an incorrect test expectation for an unknown
 profile: the existing domain returns 404, and the fixture was corrected.
+The first CI run on Python 3.11 found that rendering the deeply nested fixture
+inside a subtest label raised `RecursionError` before reaching the validator.
+The label now uses a case index, preserving the deep input and actual assertion.
 
 ## Real project use and limits
 

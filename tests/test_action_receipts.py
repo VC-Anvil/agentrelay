@@ -74,8 +74,8 @@ class ActionReceiptTests(unittest.TestCase):
         for _ in range(1200):
             nested = [nested]
         invalid.append({**first, "data": {"title": nested}})
-        for request in invalid:
-            with self.subTest(request=str(request)[:80]):
+        for index, request in enumerate(invalid):
+            with self.subTest(invalid_case=index):
                 with self.assertRaises(DomainError) as caught:
                     validate_ticket_action_request(request)
                 self.assertEqual(caught.exception.status, 400)
