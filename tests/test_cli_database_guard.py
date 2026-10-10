@@ -1,9 +1,9 @@
 """CLI database selection must not turn typos or unrelated files into projects."""
 
-from contextlib import closing
+from contextlib import closing, redirect_stderr
 import hashlib
+from io import StringIO
 import json
-import os
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -25,10 +25,10 @@ class CliDatabaseGuardTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def command(self, *args, env=None):
+    def command(self, *args):
         return subprocess.run(
             [sys.executable, "-m", "agentrelay", *map(str, args)],
-            capture_output=True, text=True, encoding="utf-8", timeout=10, env=env,
+            capture_output=True, text=True, encoding="utf-8", timeout=10,
         )
 
     def action_file(self, directory, action, data):
@@ -173,16 +173,19 @@ class CliDatabaseGuardTests(unittest.TestCase):
         self.assertFalse(actor_database.parent.exists())
 
     def test_home_expansion_failure_is_a_concise_database_error(self):
-        environment = os.environ.copy()
-        for name in ("HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"):
-            environment.pop(name, None)
-
-        result = self.command("serve", "--db", "~/.agentrelay/workspace.sqlite", "--port", "0",
-                              env=environment)
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("database", result.stderr.lower())
-        self.assertNotIn("traceback", result.stderr.lower())
+        # POSIX may resolve a user's home from the account database even with
+        # HOME unset. Inject the actual path failure without touching any home.
+        errors = StringIO()
+        with patch.object(sys, "argv", ["agentrelay", "serve", "--db",
+                                       "~/.agentrelay/workspace.sqlite", "--port", "0"]), \
+                patch.object(Path, "expanduser", side_effect=RuntimeError("Home unavailable")), \
+                patch.object(cli, "Store") as store, redirect_stderr(errors):
+            with self.assertRaises(SystemExit) as stopped:
+                cli.main()
+        self.assertEqual(stopped.exception.code, 1)
+        self.assertIn("database", errors.getvalue().lower())
+        self.assertNotIn("traceback", errors.getvalue().lower())
+        store.assert_not_called()
 
     def test_dangling_database_symlink_is_not_resolved_into_a_new_project(self):
         target = self.root / "missing-target" / "workspace.sqlite"

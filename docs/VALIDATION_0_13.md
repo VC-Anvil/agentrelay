@@ -78,6 +78,16 @@ validation. Both specialist packages and the root HTTP change received independe
 review. Development tickets AR-0032, AR-0033 and AR-0034 record their separate
 deliveries; earlier pending acceptance was left unchanged.
 
+The first CI candidate failed its new home-expansion error fixture on Linux:
+unsetting environment variables still allowed Python to discover the user's home
+from the OS account database, so the fixture started a server and timed out.
+The corrected test injects `Path.expanduser`'s failure directly, checks the same
+diagnostic and exit code, and asserts `Store` was never called. It touches no
+home directory and does not change application behavior. The failed CI log and
+initial package candidate were retained; final CI uses the corrected fixture.
+The affected eight-test CLI module then passed locally with one explicit symlink
+skip in 3.471 seconds; application code was unchanged after the full-suite run.
+
 The release check compares wheel and source-archive contents with the final
 working sources. An isolated wheel installation exercises foreign/empty-file
 rejection, new-path initialization, real fixture execution, retained results,
