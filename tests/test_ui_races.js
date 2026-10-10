@@ -289,6 +289,42 @@ function context(workspaceId, title) {
   };
 }
 
+function auditEvent(id, action, details, actor = "agent:author", ticketId = "T-1") {
+  return {
+    id,
+    ticket_id: ticketId,
+    actor,
+    action,
+    details,
+    created_at: `2026-10-10T10:${String(id).padStart(2, "0")}:00.000Z`
+  };
+}
+
+function flowReviewContext(workspaceId = "a") {
+  const value = reviewContext(workspaceId);
+  value.ticket.id = "T-1";
+  value.ticket.status = "done";
+  value.acceptance_context = null;
+  value.events = [
+    auditEvent(6, "complete_ticket", { reviewer: "agent:reviewer", verification: "Final check",
+      accepted_criteria: ["Criterio A", "Criterio B"] }, "agent:reviewer"),
+    auditEvent(5, "submit_ticket", { summary: "Corrected delivery", evidence: [
+      { kind: "file", label: "Corrected report", uri: "artifact://corrected" }
+    ] }),
+    auditEvent(4, "claim_ticket", { assignee: "agent:author", actual_model: "unknown",
+      actual_effort: "unknown" }),
+    auditEvent(3, "request_changes", { reason: "Include the missing unit",
+      previous_assignee: "agent:author", submitted_revision: 3, returned_revision: 4 },
+    "agent:reviewer"),
+    auditEvent(2, "submit_ticket", { summary: "Initial delivery", evidence: [
+      { kind: "file", label: "Initial report", uri: "artifact://initial" }
+    ] }),
+    auditEvent(1, "claim_ticket", { assignee: "agent:author", actual_model: "unknown",
+      actual_effort: "unknown" })
+  ];
+  return value;
+}
+
 const OLD_TOKEN = `sha256:${"a".repeat(64)}`;
 const NEW_TOKEN = `sha256:${"b".repeat(64)}`;
 
@@ -1591,6 +1627,138 @@ async function semanticReviewDraftClearsOnlyAfterSuccessfulContext() {
   assert.equal(h.app.drawerDirty, false);
 }
 
+function flowHarness(ctx = flowReviewContext()) {
+  const h = loadHarness();
+  h.app.selectedId = ctx.ticket.id;
+  h.app.context = ctx;
+  h.app.state = state("a", "flow", [ctx.ticket]);
+  h.renderDrawer();
+  const body = h.byId("drawer-body");
+  const section = findElement(body, (element) => element.dataset.ticketFlow === ctx.ticket.id);
+  assert.ok(section, "falta la sección de flujo del ticket");
+  const buttons = section.querySelectorAll("[data-flow-event-id]");
+  const detail = findElement(section, (element) => element.dataset.flowDetail === ctx.ticket.id);
+  if (buttons.length) assert.ok(detail, "falta el panel de detalle del flujo");
+  return { h, ctx, body, section, buttons, detail };
+}
+
+async function flowChronologyAndReviewLoop() {
+  const { ctx, buttons, detail, section } = flowHarness();
+  assert.deepEqual(buttons.map((button) => button.dataset.flowEventId),
+    ["id:1", "id:2", "id:3", "id:4", "id:5", "id:6"]);
+  assert.deepEqual(ctx.events.map((event) => event.id), [6, 5, 4, 3, 2, 1],
+    "el render no debe mutar el contexto newest-first");
+  assert.equal(buttons.at(-1).getAttribute("aria-current"), "true");
+  assert.match(treeText(detail), /Final check/);
+  assert.match(treeText(detail), /Criterio A/);
+  assert.match(treeText(section), /Historial completo · 6 eventos/);
+  assert.doesNotMatch(buttons.map(treeText).join(" "), /revisando|pensando|en directo/i);
+  assert.equal(buttons.every((button) => button.tagName === "BUTTON" && button.type === "button"), true);
+}
+
+async function flowHistoricalDetailsAreRealEvents() {
+  const { buttons, detail } = flowHarness();
+  await buttons[1].dispatch("click");
+  assert.match(treeText(detail), /Initial delivery/);
+  assert.match(treeText(detail), /artifact:\/\/initial/);
+  assert.doesNotMatch(treeText(detail), /Corrected delivery|Final check/);
+  await buttons[2].dispatch("click");
+  assert.match(treeText(detail), /Include the missing unit/);
+  assert.match(treeText(detail), /Responsable anterior/);
+  assert.match(treeText(detail), /Revisión devuelta/);
+  await buttons[4].dispatch("click");
+  assert.match(treeText(detail), /Corrected delivery/);
+  assert.match(treeText(detail), /artifact:\/\/corrected/);
+  assert.equal(buttons[4].getAttribute("aria-expanded"), "true");
+  assert.equal(buttons[2].getAttribute("aria-current"), "false");
+}
+
+async function flowSelectionDoesNotTouchDraftsOrTransport() {
+  const ctx = flowReviewContext();
+  ctx.ticket.status = "in_progress";
+  ctx.ticket.assignee = "agent:author";
+  const { h, body, buttons, detail } = flowHarness(ctx);
+  const definition = findElement(body, (element) => element.dataset.form === "edit-ticket");
+  const title = setControl(definition, "title", "Borrador local");
+  const formScope = h.app.drawerFormsScope;
+  const formRecords = h.app.drawerForms;
+  const dirtyBefore = h.app.drawerDirty;
+  const requestBefore = h.app.contextRequest;
+  const mutationBefore = h.app.mutationCount;
+  const reviewBefore = h.app.reviewDraft;
+  await buttons[2].dispatch("click");
+  assert.match(treeText(detail), /Include the missing unit/);
+  assert.equal(title.value, "Borrador local");
+  assert.equal(findElement(body, (element) => element.dataset.form === "edit-ticket"), definition);
+  assert.equal(h.app.drawerFormsScope, formScope);
+  assert.equal(h.app.drawerForms, formRecords);
+  assert.equal(h.app.drawerDirty, dirtyBefore);
+  assert.equal(h.app.reviewDraft, reviewBefore);
+  assert.equal(h.app.contextRequest, requestBefore);
+  assert.equal(h.app.mutationCount, mutationBefore);
+  assert.equal(h.transport.calls.length, 0);
+  assert.equal(h.confirmations.length, 0);
+}
+
+async function flowUnknownActionIsTextAndNotDropped() {
+  const ctx = flowReviewContext();
+  const attack = '<img src=x onerror="alert(1)">';
+  ctx.events.unshift(auditEvent(7, "future_action", { body: attack, odd: "<script>bad()</script>" }, attack));
+  const { buttons, detail, section } = flowHarness(ctx);
+  assert.equal(buttons.length, 7);
+  assert.equal(buttons.at(-1).dataset.flowEventId, "id:7");
+  assert.match(treeText(detail), /future_action/);
+  assert.match(treeText(detail), /<img src=x onerror=/);
+  assert.match(treeText(detail), /<script>bad\(\)<\/script>/);
+  assert.equal(findElement(section, (element) => ["SCRIPT", "IMG"].includes(element.tagName)), null);
+  assert.equal(findElement(section, (element) => Object.prototype.hasOwnProperty.call(element, "innerHTML")), null);
+  assert.match(treeText(section), /Otro evento/);
+}
+
+async function flowSelectionIsScopedAndSurvivesRefresh() {
+  const { h, ctx, buttons, body, section } = flowHarness();
+  await buttons[2].dispatch("click");
+  assert.equal(h.app.flowSelection.eventId, "id:3");
+  ctx.events.unshift(auditEvent(7, "add_comment", { body: "New event" }));
+  h.renderDrawer();
+  section.isConnected = false; // El DOM real desconecta esta sección al reemplazar drawer-body.
+  const refreshed = findElement(body, (element) => element.dataset.ticketFlow === "T-1");
+  const refreshedDetail = findElement(refreshed, (element) => element.dataset.flowDetail === "T-1");
+  assert.equal(h.app.flowSelection.eventId, "id:3", "un nuevo evento no debe robar selección explícita");
+  assert.match(treeText(refreshedDetail), /Include the missing unit/);
+  await buttons[0].dispatch("click");
+  assert.equal(h.app.flowSelection.eventId, "id:3", "un nodo retirado no debe alterar el drawer vigente");
+  h.closeTicket();
+  assert.equal(h.app.flowSelection, null);
+  h.openTicket("T-1");
+  assert.equal(h.app.flowSelection, null);
+  assert.equal(h.transport.calls.length, 1);
+  h.transport.respond(0, ctx);
+  await new Promise((resolve) => setImmediate(resolve));
+  const reopened = findElement(body, (element) => element.dataset.ticketFlow === "T-1");
+  const reopenedButtons = reopened.querySelectorAll("[data-flow-event-id]");
+  assert.equal(reopenedButtons.at(-1).getAttribute("aria-current"), "true");
+  assert.equal(h.app.flowSelection.eventId, "id:7");
+}
+
+async function flowEmptyAndPartialHistoriesAreHonest() {
+  const empty = flowReviewContext();
+  empty.events = [];
+  const full = flowHarness(empty);
+  assert.equal(full.buttons.length, 0);
+  assert.match(treeText(full.section), /Todavía no hay eventos registrados/);
+  assert.equal(findElement(full.section, (element) => element.dataset.flowHistory === "complete") !== null, true);
+  const partial = flowReviewContext();
+  partial.events = partial.events.slice(0, 2);
+  partial.events_page = { total: 7, count: 2, limit: 2, next_before_id: 5 };
+  const view = flowHarness(partial);
+  assert.deepEqual(view.buttons.map((button) => button.dataset.flowEventId), ["id:5", "id:6"]);
+  assert.equal(findElement(view.section, (element) => element.dataset.flowHistory === "partial") !== null, true);
+  assert.match(treeText(view.section), /Mostrando 2 de 7 eventos/);
+  assert.match(treeText(view.section), /eventos anteriores sin cargar/);
+  assert.doesNotMatch(treeText(view.section), /Historial completo/);
+}
+
 const tests = [
   ["GET antiguo no sobrescribe una mutación", oldGetCannotOverwriteMutation],
   ["cerrar y reabrir descarta contexto antiguo", closeAndReopenRejectsOldContext],
@@ -1634,8 +1802,31 @@ const tests = [
   ["el 409 con GET fallido conserva otro borrador hasta retry", failedCompletionRefreshKeepsOtherDraftUntilRetrySucceeds],
   ["guardar definición con comentario exige consentimiento", definitionSaveWithCommentDraftRequiresConsent],
   ["checkbox cuenta y controles deshabilitados no", checkboxDraftPromptsButDisabledControlsDoNot],
-  ["la revisión semántica sólo se descarta tras GET válido", semanticReviewDraftClearsOnlyAfterSuccessfulContext]
+  ["la revisión semántica sólo se descarta tras GET válido", semanticReviewDraftClearsOnlyAfterSuccessfulContext],
+  ["el flujo muestra cronología y ciclo de revisión", flowChronologyAndReviewLoop],
+  ["el detalle histórico distingue entrega, corrección y aceptación", flowHistoricalDetailsAreRealEvents],
+  ["seleccionar un evento conserva borradores y no hace peticiones", flowSelectionDoesNotTouchDraftsOrTransport],
+  ["acción futura y texto hostil siguen como datos", flowUnknownActionIsTextAndNotDropped],
+  ["selección permanece en refresh y se aísla al reabrir", flowSelectionIsScopedAndSurvivesRefresh],
+  ["historial vacío o parcial se identifica sin inventar inicio", flowEmptyAndPartialHistoriesAreHonest]
 ];
+
+// Un contexto privado puede comprobarse manualmente sin copiarlo al test público.
+if (process.env.AGENTRELAY_FLOW_CONTEXT) {
+  tests.push(["contexto real suministrado", async () => {
+    const ctx = JSON.parse(fs.readFileSync(process.env.AGENTRELAY_FLOW_CONTEXT, "utf8"));
+    ctx.workspace = { id: "a" };
+    const { h, buttons, detail } = flowHarness(ctx);
+    assert.deepEqual(buttons.map((button) => button.dataset.flowEventId),
+      ["id:38", "id:39", "id:40", "id:41", "id:42", "id:43", "id:44"]);
+    assert.match(treeText(detail), /Criterios registrados como aceptados/);
+    await buttons[3].dispatch("click");
+    assert.match(treeText(detail), /Motivo de devolución/);
+    await buttons[5].dispatch("click");
+    assert.match(treeText(detail), /Resumen de entrega/);
+    assert.equal(h.transport.calls.length, 0);
+  }]);
+}
 
 (async () => {
   for (const [name, test] of tests) {

@@ -1,6 +1,8 @@
 # AgentRelay validation
 
-The current 0.12 work is covered by [scoped atomic claim validation](VALIDATION_0_12.md).
+This page preserves earlier validation records. For current checks and workflow
+guides, start with the [README](../README.md#tests-and-architecture).
+The 0.12 work is covered by [scoped atomic claim validation](VALIDATION_0_12.md).
 Earlier [report integrity and stored-result validation](VALIDATION_0_11.md) remains available.
 Earlier [execution discovery validation](VALIDATION_0_10.md) remains available.
 The preceding [retained worker proposal validation](VALIDATION_0_9.md) is archived.
@@ -69,3 +71,8 @@ These regression fixtures do not modify the four game projects or their source
 files. Existing documentary pilots remain separate. Fresh browser QA is still
 pending explicit authorization after the earlier tool denial; protocol and CLI
 checks do not constitute visual verification.
+## Historical environment notes
+
+The [maintainer environment record](LOCAL_SETUP.md) preserves paths, ports and
+setup failures from an earlier validation session. It is historical evidence;
+new users should follow the [portable MCP setup](MCP_SETUP.md).

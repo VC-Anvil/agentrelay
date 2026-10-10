@@ -22,8 +22,11 @@
     checkpoint: "Avance registrado",
     submit_ticket: "Enviada a revisión",
     complete_ticket: "Tarea completada",
+    request_changes: "Cambios solicitados",
     request_help: "Ayuda solicitada",
     split_ticket: "Tarea dividida",
+    create_help: "Tarea de ayuda creada",
+    create_split_child: "Subtarea creada",
     add_comment: "Comentario añadido",
     create_profile: "Perfil creado",
     update_profile: "Perfil actualizado",
@@ -75,6 +78,7 @@
     drawerMutation: null,
     drawerForms: new Map(),
     drawerFormsScope: null,
+    flowSelection: null,
     uncertainDrawerWarning: null,
     dialogDirty: false,
     loadingEpoch: null,
@@ -109,6 +113,7 @@
     app.drawerMutation = null;
     app.drawerForms = new Map();
     app.drawerFormsScope = null;
+    app.flowSelection = null;
     app.uncertainDrawerWarning = null;
     $("#ticket-drawer").removeAttribute("aria-busy");
   };
@@ -372,6 +377,105 @@
     const disclosure = node("details", "audit-details");
     disclosure.append(node("summary", "", "Ver auditoría completa"), node("pre", "", JSON.stringify(details, null, 2)));
     return disclosure;
+  };
+  const FLOW_STAGE = {
+    origin: "Origen",
+    work: "Trabajo",
+    delivery: "Entrega",
+    review: "Revisión aceptada",
+    correction: "Corrección",
+    other: "Otro evento"
+  };
+  const flowStage = (action) => {
+    if (["create_ticket", "create_plan_ticket", "create_help", "create_split_child"].includes(action)) return "origin";
+    if (action === "submit_ticket") return "delivery";
+    if (action === "complete_ticket") return "review";
+    if (action === "request_changes") return "correction";
+    if (["claim_ticket", "checkpoint", "update_ticket", "transition", "add_comment", "request_help", "split_ticket", "start_run", "cancel_run"].includes(action)) return "work";
+    return "other";
+  };
+  const flowEventKey = (event, fallback) => event?.id !== undefined && event?.id !== null ? `id:${event.id}` : `position:${fallback}`;
+  const flowSelectionFor = (ticket) => {
+    const selection = app.flowSelection;
+    return selection && ticket && isCurrentDrawer(selection) && selection.ticketId === ticket.id ? selection : null;
+  };
+  const flowValue = (target, label, value) => {
+    if (value === null || value === undefined || value === "") return;
+    const row = node("div", "flow-detail-row");
+    row.append(node("strong", "", label), node("span", "", value));
+    target.append(row);
+  };
+  const flowEvidence = (target, evidence) => {
+    if (!Array.isArray(evidence) || !evidence.length) return;
+    const block = node("div", "flow-evidence");
+    block.append(node("strong", "", "Evidencia entregada"));
+    const list = node("ul");
+    evidence.forEach((item) => {
+      const label = item && typeof item === "object" ? item.label || "Evidencia" : "Evidencia";
+      const kind = item && typeof item === "object" ? item.kind || "referencia" : "referencia";
+      const uri = item && typeof item === "object" ? item.uri || "Sin URI" : String(item ?? "Sin URI");
+      list.append(node("li", "", `${label} · ${kind} · ${uri}`));
+    });
+    block.append(list);
+    target.append(block);
+  };
+  const renderFlowDetail = (target, event) => {
+    clear(target);
+    const action = event?.action || "";
+    const details = event?.details && typeof event.details === "object" ? event.details : event?.details;
+    const stage = flowStage(action);
+    const head = node("div", "flow-detail-head");
+    head.append(node("span", `flow-stage flow-stage-${stage}`, FLOW_STAGE[stage]), node("h4", "", ACTION[action] || action || "Evento"));
+    target.append(head);
+    const time = node("time", "", formatDate(event?.created_at));
+    if (event?.created_at) {
+      time.dateTime = event.created_at;
+      time.title = String(event.created_at);
+    }
+    const identity = node("p", "flow-detail-meta");
+    identity.append(node("span", "", `Actor registrado: ${event?.actor || "sistema"}`), time);
+    target.append(identity, node("p", "flow-detail-summary", describeDetails(details, action)));
+    if (details && typeof details === "object") {
+      if (action === "claim_ticket") {
+        flowValue(target, "Responsable", details.assignee);
+        flowValue(target, "Modelo declarado", details.actual_model);
+        flowValue(target, "Esfuerzo declarado", details.actual_effort);
+      } else if (action === "submit_ticket") {
+        flowValue(target, "Resumen de entrega", details.summary);
+        flowEvidence(target, details.evidence);
+      } else if (action === "checkpoint") {
+        flowValue(target, "Avance completo", details.checkpoint);
+      } else if (action === "add_comment") {
+        flowValue(target, "Comentario completo", details.body);
+      } else if (action === "request_changes") {
+        flowValue(target, "Motivo de devolución", details.reason);
+        flowValue(target, "Responsable anterior", details.previous_assignee);
+        flowValue(target, "Revisión entregada", details.submitted_revision);
+        flowValue(target, "Revisión devuelta", details.returned_revision);
+      } else if (action === "complete_ticket") {
+        flowValue(target, "Revisor registrado", details.reviewer);
+        flowValue(target, "Verificación", details.verification);
+        if (Array.isArray(details.accepted_criteria) && details.accepted_criteria.length) {
+          const criteria = node("div", "flow-evidence");
+          criteria.append(node("strong", "", "Criterios registrados como aceptados"));
+          const list = node("ul");
+          details.accepted_criteria.forEach((criterion) => list.append(node("li", "", criterion)));
+          criteria.append(list);
+          target.append(criteria);
+        }
+      } else if (action === "transition") {
+        flowValue(target, "Estado anterior", STATUS[details.from] || details.from);
+        flowValue(target, "Estado de destino", STATUS[details.to] || details.to);
+        flowValue(target, "Motivo", details.reason);
+      } else if (action === "request_help") {
+        flowValue(target, "Tarea de ayuda", details.child_id);
+        flowValue(target, "Título", details.title);
+      } else if (action === "split_ticket" && Array.isArray(details.children)) {
+        flowValue(target, "Subtareas creadas", details.children.join(", "));
+      }
+    }
+    const raw = auditDetails(details);
+    if (raw) target.append(raw);
   };
 
   async function request(url, options = {}) {
@@ -683,7 +787,7 @@
     foot.append(identity);
     const blockers = ticket.blockers || [];
     foot.append(node("span", blockers.length ? "blockers" : "", blockers.length ? `${blockers.length} bloqueo${blockers.length === 1 ? "" : "s"}` : ticket.ready && ticket.status === "queued" ? "Lista" : TYPE[ticket.type] || ticket.type));
-    card.append(foot);
+    card.append(foot, node("span", "card-open-hint", "Ver flujo y detalle →"));
     return card;
   }
 
@@ -1006,6 +1110,93 @@
     return section;
   }
 
+  function flowSection(ticket) {
+    const section = drawerSection("Flujo de trabajo");
+    section.classList.add("ticket-flow");
+    section.dataset.ticketFlow = ticket.id;
+    const events = Array.isArray(app.context?.events) ? app.context.events : [];
+    const page = app.context?.events_page && typeof app.context.events_page === "object" ? app.context.events_page : null;
+    const total = Number.isInteger(page?.total) ? page.total : events.length;
+    const partial = Boolean(page && (page.next_before_id !== null && page.next_before_id !== undefined || total > events.length));
+    const status = node("div", "flow-status");
+    status.append(node("span", "summary-pill", `Estado actual: ${STATUS[ticket.status] || ticket.status}`));
+    const historyText = partial
+      ? `Historial registrado; no muestra actividad en directo. Mostrando ${events.length} de ${total} eventos. Hay eventos anteriores sin cargar; este tramo no es el inicio completo.`
+      : `Historial registrado; no muestra actividad en directo. Historial completo · ${events.length} evento${events.length === 1 ? "" : "s"}`;
+    const history = node("p", partial ? "flow-history is-partial" : "flow-history", historyText);
+    history.dataset.flowHistory = partial ? "partial" : "complete";
+    section.append(status, history);
+    if (!events.length) {
+      section.append(node("div", "context-note", partial ? "No hay eventos cargados en este tramo del historial." : "Todavía no hay eventos registrados para esta tarea."));
+      return section;
+    }
+
+    const ordered = [...events].reverse();
+    const keyed = ordered.map((event, index) => ({ event, key: flowEventKey(event, index) }));
+    const existing = flowSelectionFor(ticket);
+    const existingItem = existing?.explicit ? keyed.find((item) => item.key === existing.eventId) : null;
+    const selected = existingItem || keyed[keyed.length - 1];
+    const scope = captureDrawer(ticket.id);
+    app.flowSelection = { ...scope, eventId: selected.key, explicit: Boolean(existingItem) };
+
+    const seenStages = [];
+    keyed.forEach(({ event }) => {
+      const stage = flowStage(event?.action);
+      if (!seenStages.includes(stage)) seenStages.push(stage);
+    });
+    const legend = node("div", "flow-legend");
+    legend.setAttribute("aria-label", "Fases presentes en el historial");
+    seenStages.forEach((stage) => legend.append(node("span", `flow-stage flow-stage-${stage}`, FLOW_STAGE[stage])));
+    section.append(legend);
+
+    const layout = node("div", "ticket-flow-layout");
+    const rail = node("ol", "flow-rail");
+    rail.setAttribute("aria-label", "Eventos de la tarea, del más antiguo al más reciente");
+    const detail = node("div", "flow-detail");
+    detail.dataset.flowDetail = ticket.id;
+    detail.id = `flow-detail-${app.drawerEpoch}`;
+    keyed.forEach(({ event, key }) => {
+      const stage = flowStage(event?.action);
+      const item = node("li", `flow-item flow-item-${stage}`);
+      const button = node("button", "flow-node");
+      button.type = "button";
+      button.dataset.flowEventId = key;
+      button.setAttribute("aria-controls", detail.id);
+      const isSelected = key === selected.key;
+      button.classList.toggle("is-selected", isSelected);
+      button.setAttribute("aria-current", isSelected ? "true" : "false");
+      button.setAttribute("aria-expanded", isSelected ? "true" : "false");
+      const top = node("span", "flow-node-top");
+      top.append(node("span", `flow-dot flow-dot-${stage}`), node("span", "flow-node-action", ACTION[event?.action] || event?.action || "Evento"));
+      const meta = node("span", "flow-node-meta");
+      meta.append(node("span", "", event?.actor || "sistema"));
+      const eventTime = node("time", "", formatDate(event?.created_at));
+      if (event?.created_at) {
+        eventTime.dateTime = event.created_at;
+        eventTime.title = String(event.created_at);
+      }
+      meta.append(node("span", "", " · "), eventTime);
+      button.append(top, meta);
+      button.addEventListener("click", () => {
+        if (!isCurrentDrawer(scope) || (typeof section.isConnected === "boolean" && !section.isConnected)) return;
+        app.flowSelection = { ...scope, eventId: key, explicit: true };
+        $$('[data-flow-event-id]', rail).forEach((candidate) => {
+          const active = candidate.dataset.flowEventId === key;
+          candidate.classList.toggle("is-selected", active);
+          candidate.setAttribute("aria-current", active ? "true" : "false");
+          candidate.setAttribute("aria-expanded", active ? "true" : "false");
+        });
+        renderFlowDetail(detail, event);
+      });
+      item.append(button);
+      rail.append(item);
+    });
+    renderFlowDetail(detail, selected.event);
+    layout.append(rail, detail);
+    section.append(layout);
+    return section;
+  }
+
   function renderDrawer() {
     const ticket = currentTicket();
     if (!ticket) return;
@@ -1030,9 +1221,11 @@
     const sections = [summary];
     const uncertainty = uncertainDrawerNotice(ticket);
     if (uncertainty) sections.push(uncertainty);
-    sections.push(editSection(ticket), lifecycleSection(ticket));
+    sections.push(flowSection(ticket), editSection(ticket), lifecycleSection(ticket));
     if (ticket.status === "queued" && ticket.ready) sections.push(executionSection(ticket));
-    sections.push(relationsSection(ticket), evidenceSection(ticket), sourceChecksSection(), contextSection(ticket));
+    sections.push(relationsSection(ticket), evidenceSection(ticket), sourceChecksSection());
+    const context = contextSection();
+    if (context) sections.push(context);
     body.append(...sections);
     registerDrawerForms(ticket);
   }
@@ -1544,24 +1737,9 @@
   }
 
   function contextSection() {
-    const section = drawerSection("Contexto e historial");
-    if (app.context?.instructions) {
-      section.append(node("h4", "", "Instrucciones"));
-      section.append(node("div", "context-note", typeof app.context.instructions === "string" ? app.context.instructions : JSON.stringify(app.context.instructions, null, 2)));
-    }
-    const events = app.context?.events || [];
-    if (!events.length) section.append(node("div", "context-note", "No hay eventos para esta tarea."));
-    else {
-      const list = node("div", "history-list");
-      events.forEach((event) => {
-        const item = node("div", "history-item");
-        item.append(node("strong", "", `${event.actor || "sistema"} · ${ACTION[event.action] || event.action || "Evento"}`), node("p", "", describeDetails(event.details, event.action)), node("time", "", formatDate(event.created_at)));
-        const raw = auditDetails(event.details);
-        if (raw) item.append(raw);
-        list.append(item);
-      });
-      section.append(list);
-    }
+    if (!app.context?.instructions) return null;
+    const section = drawerSection("Instrucciones");
+    section.append(node("div", "context-note", typeof app.context.instructions === "string" ? app.context.instructions : JSON.stringify(app.context.instructions, null, 2)));
     return section;
   }
 

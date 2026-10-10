@@ -1,4 +1,11 @@
-# This checkout
+# Historical maintainer environment
+
+This page records an earlier validation session on the maintainer's machine.
+Its paths, ports, process configuration and environment failures are historical
+evidence, not portable setup instructions or a statement of current services.
+For a new connection, use the [portable MCP setup](MCP_SETUP.md) or
+[worker configuration](EXECUTION.md). Preserve existing servers and environments;
+do not copy the historical commands below as instructions to replace them.
 
 Location: `D:/AgentWorkspace/agentrelay`.
 
