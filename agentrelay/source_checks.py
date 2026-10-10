@@ -89,7 +89,7 @@ def _existing(db, request_id: str, actor: str, intent_json: str, intent_sha256: 
                 or row["intent_sha256"] != intent_sha256):
             raise DomainError("request_id already used with different actor or intent", 409)
         return _receipt(row)
-    for table in ("plan_requests", "claim_requests"):
+    for table in ("plan_requests", "claim_requests", "action_requests"):
         if db.execute(f"SELECT 1 FROM {table} WHERE request_id=?", (request_id,)).fetchone():
             raise DomainError(f"request_id already used by {table}", 409)
     return None

@@ -4,7 +4,7 @@ Tools operate on the same SQLite domain service as the web UI. The SDK handles
 stdio framing, initialization and schema discovery. No model calls occur here.
 """
 
-from typing import Literal
+from typing import Literal, get_args
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -14,11 +14,18 @@ from .run_history import list_runs as read_runs
 from .run_results import get_run_result as read_run_result
 from .source_checks import get_source_check as read_source_check
 from .source_checks import list_source_checks as read_source_checks
-from .store import DomainError, PRIORITIES, STATUSES, Store
+from .store import DomainError, PRIORITIES, STATUSES, TICKET_ACTIONS, Store
 
 
 LIST_SUMMARY_FIELDS = ("id", "title", "type", "status", "priority", "parent_id",
                        "profile_id", "assignee", "revision", "ready", "blockers")
+TicketAction = Literal[
+    "create_ticket", "update_ticket", "transition", "claim_ticket", "checkpoint",
+    "submit_ticket", "complete_ticket", "request_changes", "request_help",
+    "split_ticket", "add_comment",
+]
+if frozenset(get_args(TicketAction)) != TICKET_ACTIONS:
+    raise RuntimeError("MCP ticket action enum does not match the domain contract")
 
 
 def create_mcp(store: Store, actor: str) -> FastMCP:
@@ -222,7 +229,23 @@ def create_mcp(store: Store, actor: str) -> FastMCP:
                                     "priority": priority, "type": type, "parent_id": parent_id,
                                     "depends_on": depends_on or [], "profile_id": profile_id})
 
-    @server.tool(annotations=write)
+    @server.tool(annotations=idempotent_write)
+    def apply_ticket_action(request_id: str, action: TicketAction, data: dict) -> dict:
+        """Apply one explicit ticket write with a durable idempotency receipt.
+
+        Generate one stable request_id before the logical operation. After an
+        uncertain response, retry only this exact action and data with the same ID;
+        the receipt result is historical, so read current ticket context before any
+        later work. A changed payload needs a new ID and fresh authorization. The
+        connection binds the actor. data cannot contain actor or request_id. This
+        tool never retries automatically, launches a worker or approves work
+        automatically; complete_ticket remains an explicit review decision.
+        """
+        return act("apply_ticket_action", {
+            "request_id": request_id, "action": action, "data": data,
+        })
+
+    @server.tool(annotations=idempotent_write)
     def create_plan(request_id: str, tickets: list[dict]) -> dict:
         """Atomically create up to 64 authorized tasks, in backlog unless explicitly queued.
 

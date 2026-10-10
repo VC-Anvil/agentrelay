@@ -6,7 +6,7 @@
 
 Turn goals into prioritized tickets, share durable context between agents, and keep delivery separate from acceptance. Humans use the web board; agents use the MCP server. Both operate on the same SQLite database.
 
-AgentRelay 0.18 combines a persistent ticket board, an MCP server and optional worker execution. Agents find work through filtered summaries and open current context with recent history; older audit events remain available by cursor. Register multiple local projects, inspect their priorities without starting workers, import complete plans without duplicates, capture exact review inputs and inspect changes between verified captures. Reserve one of several reviewed tickets by priority without duplicate claims after retries. Find a ticket's worker executions, recover a retained proposal after a conflict and review it against the current ticket without launching the worker again. Independent reviewers can return deliveries for correction while preserving the original evidence and keeping feedback in worker context. Acceptance checks that the immediate context presented to the reviewer still matches current state. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
+AgentRelay 0.19 combines a persistent ticket board, an MCP server and optional worker execution. Agents find work through filtered summaries and open current context with recent history; older audit events remain available by cursor. Register multiple local projects, inspect their priorities without starting workers, import complete plans without duplicates, capture exact review inputs and inspect changes between verified captures. Keyed ticket operations let agents recover a lost response without repeating its effects. Reserve one of several reviewed tickets by priority without duplicate claims after retries. Find a ticket's worker executions, recover a retained proposal after a conflict and review it against the current ticket without launching the worker again. Independent reviewers can return deliveries for correction while preserving the original evidence and keeping feedback in worker context. Acceptance checks that the immediate context presented to the reviewer still matches current state. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
 
 ![AgentRelay local board with explicitly fictional demo data](docs/preview.jpg)
 
@@ -29,7 +29,8 @@ That uses `.agentrelay/workspace.sqlite`. Stop the first server or use another `
 Existing files must be recognized AgentRelay databases before any startup writes;
 unrelated, empty or corrupt files are rejected. `serve`, `mcp` and the creation
 actions `create_ticket`, `create_plan` and `create_profile` may initialize a new
-path. Queries, backup, `run` and other actions require an existing project, so a
+path, as may a validated `apply_ticket_action` wrapping `create_ticket`.
+Queries, backup, `run` and other actions require an existing project, so a
 misspelled path does not create an empty one. Valid databases still receive normal
 migrations. See [database selection and initialization](docs/DATABASES.md).
 
@@ -55,6 +56,7 @@ database and backup let you inspect what happened. See the
 - Task descriptions, acceptance criteria, nested subtasks and explicit dependencies.
 - Agent profiles with role, provider, model, recommended effort, capabilities and quality/speed preference.
 - Atomic claiming and optimistic revisions: two writers cannot silently overwrite the same ticket.
+- Durable receipts for explicitly keyed ticket operations through MCP, CLI and HTTP. Recover an uncertain response without another write; historical results remain distinct from current context. [Usage and limits](docs/ACTION_RECEIPTS.md).
 - Drawer forms keep their own editing context when another ticket's pending action finishes. [Validation and limits](docs/VALIDATION_DRAWER_ISOLATION.md).
 - Pending drawer actions temporarily lock editing; failed refreshes recover by reading context without repeating a confirmed action. [Behavior and validation](docs/VALIDATION_PENDING_DRAWER.md).
 - Actions warn before discarding unsaved changes in another form of the same ticket. [Draft protection and limits](docs/VALIDATION_CROSS_FORM_DRAFT.md).
@@ -119,7 +121,7 @@ On Windows, use the environment's `Scripts/agentrelay.exe`. From an uninstalled 
 
 Use a different stable actor name for each worker/reviewer connection. The actor is fixed by the launch command, rather than supplied with each tool call. The MCP layer is for trusted local collaborators; it is not a multi-tenant authentication boundary.
 
-Useful tools: `list_tickets`, `get_ticket_context`, `list_ticket_events`, `list_profiles`, `create_ticket`, `create_plan`, `update_ticket`, `claim_ticket`, `save_checkpoint`, `request_help`, `split_ticket`, `transition_ticket`, `submit_ticket`, `review_ticket`, `add_comment`. `agentrelay://workflow` exposes the handoff rules as a resource.
+Useful tools: `list_tickets`, `get_ticket_context`, `list_ticket_events`, `list_profiles`, `apply_ticket_action`, `create_ticket`, `create_plan`, `update_ticket`, `claim_ticket`, `save_checkpoint`, `request_help`, `split_ticket`, `transition_ticket`, `submit_ticket`, `review_ticket`, `add_comment`. `agentrelay://workflow` exposes the handoff rules as a resource.
 
 `list_tickets` returns up to 20 summaries by default, ordered by priority. Filter
 with `assignee` to resume owned work or `ready_only` to find available tasks.

@@ -219,6 +219,7 @@ def main():
         return
     if args.command == "action":
         # Validate the envelope before creating a database, and bound input reads.
+        validated_ticket_action = None
         try:
             with args.input.open("rb") as stream:
                 raw = stream.read(1_048_577)
@@ -228,7 +229,10 @@ def main():
             if (not isinstance(request, dict) or set(request) != {"action", "data"}
                     or not isinstance(request["action"], str) or not isinstance(request["data"], dict)):
                 raise ValueError("Expected an object with exactly action (string) and data (object)")
-        except (ValueError, OSError, RecursionError) as exc:
+            if request["action"] == "apply_ticket_action":
+                from .store import validate_ticket_action_request
+                validated_ticket_action = validate_ticket_action_request(request["data"])
+        except (DomainError, ValueError, OSError, RecursionError, UnicodeError) as exc:
             parser.exit(1, f"Action input: {exc}\n")
         if not args.actor.strip():
             parser.error("--actor must be a nonempty identity")
@@ -237,10 +241,15 @@ def main():
         parser.error("--actor must be a nonempty agent:<name> identity")
     demo = getattr(args, "demo", False)
     database = args.db or Path.cwd() / ".agentrelay" / ("demo.sqlite" if demo else "workspace.sqlite")
+    action_bootstraps = (args.command == "action" and (
+        request["action"] in BOOTSTRAP_ACTIONS
+        or (request["action"] == "apply_ticket_action"
+            and validated_ticket_action["action"] == "create_ticket")
+    ))
     requires_existing = args.command in {
         "context", "history", "export", "runs", "run-result", "backup", "run",
         "check-sources", "source-checks", "source-check",
-    } or (args.command == "action" and request["action"] not in BOOTSTRAP_ACTIONS)
+    } or (args.command == "action" and not action_bootstraps)
     try:
         # Store/the read preflight inspect the selected path before resolving it, including symlinks.
         database = database.expanduser()

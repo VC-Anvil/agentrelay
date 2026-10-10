@@ -29,6 +29,7 @@ id string, name string, role string, provider string, model string, effort strin
 
 ## Actions and data
 
+- apply_ticket_action: exact `{request_id,action,data}` wrapper for eligible ticket mutations, with a required key and no nested `actor` or `request_id`. Returns `{request_id,action,actor,committed_at,replayed,result}`; HTTP nests that receipt under its normal `result` and reads `state` afresh. Same key, actor and canonical intent returns the original historical result without new effects; conflicting reuse is 409. Effect and receipt commit atomically. New operations retain lifecycle, ownership, revision and acceptance-token validation. See [eligible actions, limits and recovery](ACTION_RECEIPTS.md). Old versions reject the wrapper; adding a key to an ordinary action is not equivalent.
 - create_ticket: title required; all editable fields optional. Defaults task/queued/normal; no arbitrary initial completed status. acceptance recommended.
 - create_plan: exact envelope `{request_id,tickets}`; request_id nonempty <=128 characters, tickets 1..64 entries. Each entry has unique `key` <=64 characters, create_ticket fields, optional `parent_key`, `depends_on_keys`, and `status` (backlog default or queued). Local references may point forward. `parent_key` and `parent_id` are mutually exclusive; external `depends_on` may combine with local keys, without duplicates. Identifiers reject surrounding whitespace. Returns `{request_id,key_to_id,tickets}`. One transaction creates the entire validated graph and audit events; any failure rolls everything back. Same ID/actor/canonical JSON payload returns the original receipt, even after restart, without new events. Different actor/payload conflicts (409). The receipt is not current ticket context. No execution or automatic review. See [plans and freshness](PLANS_AND_FRESHNESS.md).
 - update_ticket: id, expected_revision required, any title, description, type, priority, parent_id, depends_on, profile_id, acceptance, checkpoint. State changes use transition/claim/submit/complete. Cannot weaken acceptance while in progress, review, or blocked with an assigned owner. Completed task must reopen before editing deliverable scope.
@@ -89,8 +90,8 @@ improvement is claimed.
 
 ## Audit context
 
-`create_plan` and `claim_next_ticket` share a request-ID namespace within one
-database. An ID already recorded by one cannot be used by the other (409),
+`create_plan`, `claim_next_ticket`, source checks and `apply_ticket_action` share
+a request-ID namespace within one database. An ID already recorded by one cannot be used by another (409),
 including idle claim receipts. Their exact legitimate retries remain historical
 and do not mutate current tickets. Different project databases remain independent.
 
@@ -171,7 +172,8 @@ CLI `context`, `history`, `runs`, `run-result`, `export`, `backup`, `run` and
 non-creation actions require an existing recognized AgentRelay database before
 calling `Store`. Missing paths fail without creating directories or backup output.
 `serve`, `mcp` and the actions `create_ticket`, `create_plan`, `create_profile` may
-initialize a new path. The action envelope and MCP actor are validated first.
+initialize a new path, as may a structurally validated `apply_ticket_action`
+whose inner action is `create_ticket`. The action envelope and MCP actor are validated first.
 
 Direct `Store(path)` may initialize a nonexistent path. Every existing file must
 pass the shared base-schema check before WAL setup, migrations or default profiles.

@@ -41,6 +41,18 @@ Plan imports validate and create the full graph in the same write transaction.
 retries return that receipt without generating more tickets or events. SQLite
 backup includes these receipts. A creation receipt is not a current context read.
 
+`apply_ticket_action` wraps eligible ticket mutations in the same dispatcher and
+write transaction as legacy actions. `action_requests` stores the normalized
+actor, action, bounded canonical intent and its hash, original result and commit
+time. Exact retries retrieve that receipt before current-state validation; they
+do not execute another mutation. Conflicting key reuse is rejected. Intent and
+result serialization failures roll back the action as well as the receipt.
+Plans, scoped claims, source checks and ticket actions share the project key
+namespace through symmetric guards. The source-check path checks again after its
+external comparison to close the intervening write race. Every writer must be
+upgraded for these guards to hold across all operations. See
+[ticket action receipts](ACTION_RECEIPTS.md) for limits and transport examples.
+
 ## Projects and captured inputs
 
 A trusted startup registry maps project IDs to existing databases and optional

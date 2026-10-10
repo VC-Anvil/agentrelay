@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
 import re
 import sqlite3
 from collections import deque
@@ -30,6 +31,15 @@ EDITABLE = {"title", "description", "type", "priority", "parent_id", "depends_on
             "profile_id", "acceptance", "checkpoint"}
 PROFILE_EDITABLE = {"name", "role", "provider", "model", "effort", "capabilities",
                     "preference", "description"}
+TICKET_ACTIONS = frozenset({
+    "create_ticket", "update_ticket", "transition", "claim_ticket", "checkpoint",
+    "submit_ticket", "complete_ticket", "request_changes", "request_help",
+    "split_ticket", "add_comment",
+})
+MAX_ACTION_INTENT_BYTES = 1_048_576
+MAX_ACTION_INTENT_DEPTH = 64
+MAX_ACTION_INTENT_NODES = 1_048_576
+MAX_ACTION_RESULT_BYTES = 4 * 1_048_576
 DEFAULT_PROFILES = (
     ("astra", "Astra", "coordinator", "OpenAI", "gpt-6-astra", "high", ["planning", "integration", "review"], "quality", "Coordinación y resolución compleja; modelo fijado por la dirección."),
     ("sol", "Sol", "complex implementation", "OpenAI", "gpt-6-sol", "high", ["implementation", "design", "integration"], "quality", "Implementación e integración complejas."),
@@ -50,6 +60,73 @@ def _utc() -> str:
 
 def _json(value) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def validate_ticket_action_request(data: dict) -> dict:
+    """Validate a keyed ticket write without reading or changing a database.
+
+    Return request_id, action, inner data, canonical intent JSON, and SHA-256.
+    Semantic ticket/CAS checks deliberately happen only on the first write.
+    """
+    if type(data) is not dict or set(data) != {"request_id", "action", "data"}:
+        raise DomainError("apply_ticket_action requires request_id, action and data only")
+    request_id = data["request_id"]
+    if (not isinstance(request_id, str) or not request_id
+            or request_id != request_id.strip() or len(request_id) > 128):
+        raise DomainError("request_id must be a nonempty string up to 128 characters without surrounding whitespace")
+    try:
+        request_id.encode("utf-8")
+    except UnicodeError as exc:
+        raise DomainError("request_id must be valid UTF-8") from exc
+    action = data["action"]
+    if not isinstance(action, str) or action not in TICKET_ACTIONS:
+        raise DomainError("invalid ticket action")
+    inner = data["data"]
+    if type(inner) is not dict or "actor" in inner or "request_id" in inner:
+        raise DomainError("ticket action data must be an object without actor or request_id")
+    if action == "claim_ticket":
+        for field in ("actual_model", "actual_effort"):
+            if not isinstance(inner.get(field), str) or not inner[field].strip():
+                raise DomainError(f"{field} must be declared for keyed claim_ticket")
+    # json.dumps accepts tuples and non-string object keys by coercion. Reject
+    # them so the intent is exactly the JSON value that the action will execute.
+    pending = [(inner, 1)]
+    visited = 0
+    while pending:
+        value, depth = pending.pop()
+        visited += 1
+        # Shared Python containers can expand exponentially while still fitting
+        # the depth bound. This budget exceeds the node count of any valid JSON
+        # intent within the byte limit, but stops that expansion before encoding.
+        if visited > MAX_ACTION_INTENT_NODES:
+            raise DomainError("ticket action intent exceeds JSON node budget")
+        if type(value) is dict:
+            if depth > MAX_ACTION_INTENT_DEPTH:
+                raise DomainError("ticket action intent exceeds maximum JSON depth")
+            if any(type(key) is not str for key in value):
+                raise DomainError("ticket action data must be valid JSON")
+            pending.extend((child, depth + 1) for child in value.values())
+        elif type(value) is list:
+            if depth > MAX_ACTION_INTENT_DEPTH:
+                raise DomainError("ticket action intent exceeds maximum JSON depth")
+            pending.extend((child, depth + 1) for child in value)
+        elif type(value) is float:
+            if not math.isfinite(value):
+                raise DomainError("ticket action data must be valid JSON")
+        elif value is not None and type(value) not in (str, int, bool):
+            raise DomainError("ticket action data must be valid JSON")
+    try:
+        intent_json = json.dumps({"action": action, "data": inner}, ensure_ascii=False,
+                                 sort_keys=True, separators=(",", ":"), allow_nan=False)
+        intent_bytes = intent_json.encode("utf-8")
+        detached_data = json.loads(intent_json)["data"]
+    except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
+        raise DomainError("ticket action data must be valid JSON") from exc
+    if len(intent_bytes) > MAX_ACTION_INTENT_BYTES:
+        raise DomainError("ticket action intent exceeds 1 MiB", 413)
+    return {"request_id": request_id, "action": action, "data": detached_data,
+            "intent_json": intent_json,
+            "intent_sha256": hashlib.sha256(intent_bytes).hexdigest()}
 
 
 def _nonempty(value, field: str) -> str:
@@ -152,6 +229,12 @@ class Store:
                 CREATE TABLE IF NOT EXISTS claim_requests (
                     request_id TEXT PRIMARY KEY, actor TEXT NOT NULL,
                     payload_hash TEXT NOT NULL, result TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS action_requests (
+                    request_id TEXT PRIMARY KEY, actor TEXT NOT NULL,
+                    action TEXT NOT NULL, payload_sha256 TEXT NOT NULL,
+                    payload_json TEXT NOT NULL, result_json TEXT NOT NULL,
+                    committed_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS source_checks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -526,6 +609,8 @@ class Store:
             raise DomainError("request_id already used by claim_next_ticket", 409)
         if db.execute("SELECT 1 FROM source_checks WHERE request_id=?", (request_id,)).fetchone():
             raise DomainError("request_id already used by check_sources", 409)
+        if db.execute("SELECT 1 FROM action_requests WHERE request_id=?", (request_id,)).fetchone():
+            raise DomainError("request_id already used by apply_ticket_action", 409)
 
         allowed = EDITABLE | {"key", "parent_key", "depends_on_keys", "status"}
         keys = set()
@@ -724,6 +809,8 @@ class Store:
             raise DomainError("request_id already used by create_plan", 409)
         if db.execute("SELECT 1 FROM source_checks WHERE request_id=?", (request_id,)).fetchone():
             raise DomainError("request_id already used by check_sources", 409)
+        if db.execute("SELECT 1 FROM action_requests WHERE request_id=?", (request_id,)).fetchone():
+            raise DomainError("request_id already used by apply_ticket_action", 409)
         if actor != "human" and self._actor_identity(actor) != self._actor_identity(assignee):
             raise DomainError("agent actor must match assignee", 409)
 
@@ -949,45 +1036,99 @@ class Store:
                      "after": {key: updated[key] for key in fields}})
         return updated
 
+    def _dispatch_action(self, db, action: str, data: dict, actor: str):
+        if action == "create_plan":
+            return self._create_plan(db, data, actor)
+        if action == "create_ticket":
+            return self._insert_ticket(db, data, actor)
+        if action == "update_ticket":
+            return self._update_ticket(db, data, actor)
+        if action == "transition":
+            return self._transition(db, data, actor)
+        if action == "claim_ticket":
+            return self._claim(db, data, actor)
+        if action == "claim_next_ticket":
+            return self._claim_next_ticket(db, data, actor)
+        if action == "checkpoint":
+            return self._checkpoint(db, data, actor)
+        if action == "submit_ticket":
+            return self._submit(db, data, actor)
+        if action == "complete_ticket":
+            return self._complete(db, data, actor)
+        if action == "request_changes":
+            return self._request_changes(db, data, actor)
+        if action == "request_help":
+            return self._help(db, data, actor)
+        if action == "split_ticket":
+            return self._split(db, data, actor)
+        if action == "add_comment":
+            row = self._require_ticket(db, data.get("id"))
+            body = _nonempty(data.get("body"), "body")
+            self._event(db, row["id"], actor, "add_comment", {"body": body})
+            return self._ticket(db, row["id"])
+        if action == "create_profile":
+            return self._create_profile(db, data, actor)
+        if action == "update_profile":
+            return self._update_profile(db, data, actor)
+        raise DomainError(f"unknown action: {action}")
+
+    def apply_ticket_action(self, request: dict, actor: str = "human") -> dict:
+        """Apply one keyed ticket mutation and its durable receipt atomically."""
+        intent = validate_ticket_action_request(request)
+        actor = _nonempty(actor, "actor")
+        try:
+            actor.encode("utf-8")
+        except UnicodeError as exc:
+            raise DomainError("actor must be valid UTF-8") from exc
+        with self._write() as db:
+            return self._apply_ticket_action(db, intent, actor)
+
+    def _apply_ticket_action(self, db, intent: dict, actor: str) -> dict:
+        request_id = intent["request_id"]
+        action = intent["action"]
+        row = db.execute(
+            "SELECT actor,action,payload_sha256,payload_json,result_json,committed_at "
+            "FROM action_requests WHERE request_id=?", (request_id,)).fetchone()
+        if row is not None:
+            if (row["actor"] != actor or row["action"] != action
+                    or row["payload_sha256"] != intent["intent_sha256"]
+                    or row["payload_json"] != intent["intent_json"]):
+                raise DomainError("request_id already used with different actor, action or payload", 409)
+            try:
+                result = json.loads(row["result_json"])
+            except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
+                raise DomainError("stored ticket action receipt is invalid", 500) from exc
+            return {"request_id": request_id, "action": action, "actor": actor,
+                    "committed_at": row["committed_at"], "replayed": True, "result": result}
+        for table in ("plan_requests", "claim_requests", "source_checks"):
+            if db.execute(f"SELECT 1 FROM {table} WHERE request_id=?", (request_id,)).fetchone():
+                raise DomainError(f"request_id already used by {table}", 409)
+        result = self._dispatch_action(db, action, intent["data"], actor)
+        try:
+            result_json = json.dumps(result, ensure_ascii=False, separators=(",", ":"),
+                                     allow_nan=False)
+            result_bytes = result_json.encode("utf-8")
+        except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
+            raise DomainError("ticket action result cannot be stored as JSON", 500) from exc
+        if len(result_bytes) > MAX_ACTION_RESULT_BYTES:
+            raise DomainError("ticket action receipt result exceeds 4 MiB", 413)
+        committed_at = _utc()
+        db.execute(
+            "INSERT INTO action_requests(request_id,actor,action,payload_sha256,payload_json,"
+            "result_json,committed_at) VALUES(?,?,?,?,?,?,?)",
+            (request_id, actor, action, intent["intent_sha256"], intent["intent_json"],
+             result_json, committed_at))
+        return {"request_id": request_id, "action": action, "actor": actor,
+                "committed_at": committed_at, "replayed": False, "result": result}
+
     def action(self, action: str, data: dict, actor: str = "human"):
+        if action == "apply_ticket_action":
+            return self.apply_ticket_action(data, actor)
         if not isinstance(data, dict):
             raise DomainError("data must be an object")
         actor = _nonempty(actor, "actor")
         with self._write() as db:
-            if action == "create_plan":
-                return self._create_plan(db, data, actor)
-            if action == "create_ticket":
-                return self._insert_ticket(db, data, actor)
-            if action == "update_ticket":
-                return self._update_ticket(db, data, actor)
-            if action == "transition":
-                return self._transition(db, data, actor)
-            if action == "claim_ticket":
-                return self._claim(db, data, actor)
-            if action == "claim_next_ticket":
-                return self._claim_next_ticket(db, data, actor)
-            if action == "checkpoint":
-                return self._checkpoint(db, data, actor)
-            if action == "submit_ticket":
-                return self._submit(db, data, actor)
-            if action == "complete_ticket":
-                return self._complete(db, data, actor)
-            if action == "request_changes":
-                return self._request_changes(db, data, actor)
-            if action == "request_help":
-                return self._help(db, data, actor)
-            if action == "split_ticket":
-                return self._split(db, data, actor)
-            if action == "add_comment":
-                row = self._require_ticket(db, data.get("id"))
-                body = _nonempty(data.get("body"), "body")
-                self._event(db, row["id"], actor, "add_comment", {"body": body})
-                return self._ticket(db, row["id"])
-            if action == "create_profile":
-                return self._create_profile(db, data, actor)
-            if action == "update_profile":
-                return self._update_profile(db, data, actor)
-            raise DomainError(f"unknown action: {action}")
+            return self._dispatch_action(db, action, data, actor)
 
     def seed_demo(self):
         """Install fictional examples only when explicitly requested on an empty DB."""

@@ -15,6 +15,42 @@ does not mean absence from the project. Keep the project ID and database with
 every ticket ID, and fetch current context in that database before acting.
 An overview does not authorize starting proposed work or switching the user's task.
 
+## Make recoverable ticket writes
+
+Prefer MCP `apply_ticket_action(request_id, action, data)` for new ticket writes.
+Generate and retain a fresh request ID before the first send, together with the
+exact actor, project and payload. Eligible domain names are `create_ticket`,
+`update_ticket`, `transition`, `claim_ticket`, `checkpoint`, `submit_ticket`,
+`complete_ticket`, `request_changes`, `request_help`, `split_ticket` and
+`add_comment`. The connection supplies the actor; do not put `actor` or
+`request_id` inside `data`. Dedicated tool names below describe the workflow;
+use these domain names when wrapping their corresponding writes.
+
+The authorized CLI fallback uses the exact envelope
+`{action:"apply_ticket_action",data:{request_id:"...",action:"...",data:{...}}}`.
+Do not add a key to an ordinary action and assume it is protected: older writers
+can ignore extra fields. The new wrapper requires AgentRelay 0.19 or later and
+older versions reject it before writing. If unavailable, report that durable
+recovery is unavailable rather than silently substituting an unkeyed write.
+
+An uncertain response permits an explicit retry with the exact original key,
+actor and payload in the same database. A successful response is a receipt with
+`result`, `committed_at` and `replayed`; replay retrieves the original result
+without another effect. Fetch current context before any new decision. A receipt
+of an old claim or acceptance is not current ownership or a new approval.
+Reusing a key with changed actor or payload conflicts. Inspect a conflict and
+reconcile context; never change the key, revision or review token merely to force
+the same stale intention through. Newly decided work gets a new key.
+
+Keys share the database namespace with plans, scoped claims and source checks.
+Their dedicated tools keep their existing receipt contracts. The wrapper does
+not cover worker processes or filesystem actions and never retries on its own.
+Existing permissions, ownership, revision and independent review requirements
+still govern every new action; retain the acceptance token of the context
+actually inspected. Keys must be nonempty strings of at most 128 characters
+without surrounding whitespace. Receipt storage has no automatic expiration;
+SQLite backup preserves it, while bulk project JSON export does not.
+
 ## Take work
 
 Preserve a ticket the user chose. Fetch it directly with `get_ticket_context`; do not replace it with a higher-priority item. Otherwise resume this connection actor's unfinished work before taking another ticket. Use small, filtered `list_tickets` calls rather than polling or paging through the whole catalog. Check owned `in_progress` work first, then owned blocked/review work that needs a handoff; only then request `ready_only=true` work. Readiness proves dependencies, not authorization to execute.
@@ -38,8 +74,8 @@ to recover its original receipt without another claim. The receipt is historical
 including a null ticket when none was eligible. Fetch fresh context for a returned
 ticket before continuing; never treat an old receipt as a current assignment.
 A new selection requires a new request ID and newly reviewed candidate revisions.
-Request IDs are shared by `create_plan` and `claim_next_ticket` within a project;
-never reuse a plan's ID for a claim or a claim's ID for a plan.
+Request IDs are shared by plans, scoped claims, ticket-action receipts and source
+checks within a project; never reuse one operation's ID for another.
 Reservation does not launch a model, authorize execution or accept a result.
 
 Context includes up to 20 recent audit events by default. When `events_page.next_before_id` is non-null, older history exists. Use `list_ticket_events(ticket_id, before_id, limit)` only when the task needs it; continue with its next cursor. Historical event fields can be obsolete, so use the current ticket revision for mutations and reread context after conflicts or before acting on historical values. Do not infer that an event never happened because it is absent from the recent page. CLI equivalents are `context --event-limit` and `history --before-id`; `context --all-events` explicitly retrieves everything.
@@ -65,7 +101,7 @@ this filesystem operation. A successful command exits 0 even for modified,
 missing or uncheckable inputs: inspect `summary`. Exact retries recover the old
 receipt without reading sources; preserve all original arguments after an
 uncertain response and use a new request ID to measure again. Receipt IDs share
-the project namespace with plans and scoped claims. Do not weaken execution
+the project namespace with plans, scoped claims and ticket-action receipts. Do not weaken execution
 policy, replace frozen inputs or imply that the check invalidates prior acceptance.
 
 When a changed document may alter the next task, and two authorized frozen
