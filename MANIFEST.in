@@ -10,6 +10,7 @@ recursive-include tests *.py
 recursive-include tests *.js
 recursive-include examples *.json
 recursive-include examples *.md
+recursive-include examples *.py
 prune .agentrelay
 prune .runtime
 prune .venv

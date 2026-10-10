@@ -35,6 +35,20 @@ migrations. See [database selection and initialization](docs/DATABASES.md).
 
 Windows quick launch: `powershell -File .\Start-AgentRelay.ps1 -Demo`. It prefers `.runtime` (the development environment) or `.venv`, and runs the local web service hidden with logs under `.agentrelay`. It never installs packages or configures clients automatically.
 
+To exercise a complete handoff from a checkout, install it and choose a **new**
+output directory:
+
+```sh
+python -m pip install -e .
+python examples/handoff_demo.py --output .agentrelay/handoff-example
+```
+
+This uses actual worker processes and persistent tickets with deterministic
+fixtures, without calling a model. It demonstrates help, a report returned for
+correction, independent acceptance and explicit parent resumption. The retained
+database and backup let you inspect what happened. See the
+[handoff walkthrough](docs/HANDOFF_EXAMPLE.md) for outputs and limits.
+
 ## What works
 
 - Searchable Kanban and list views, urgency and priority, proposed/queued/running/blocked/review/done/cancelled states.
@@ -141,7 +155,7 @@ python -m unittest discover -s tests -v
 
 Install `.[mcp]` to include the real SDK stdio integration test; otherwise it is explicitly skipped. The tests use disposable databases, including a complete help → resume → independent review scenario. No LLM is called.
 
-The latest [inline-report validation](docs/VALIDATION_0_17.md) covers report retrieval without filesystem access; [correction-workflow validation](docs/VALIDATION_0_16.md) covers real worker delivery, independent feedback and resubmission. The project also has earlier browser QA of the human workflow. See [validation](docs/VALIDATION.md), [architecture and boundaries](docs/ARCHITECTURE.md) and [API contract](docs/CONTRACT.md).
+The latest [handoff-example validation](docs/VALIDATION_HANDOFF_EXAMPLE.md) covers the reproducible fixture walkthrough. [Inline-report validation](docs/VALIDATION_0_17.md) covers real report retrieval without filesystem access; [correction-workflow validation](docs/VALIDATION_0_16.md) covers real worker delivery, independent feedback and resubmission. The project also has earlier browser QA of the human workflow. See [validation](docs/VALIDATION.md), [architecture and boundaries](docs/ARCHITECTURE.md) and [API contract](docs/CONTRACT.md).
 
 The active [GitHub Actions workflow](.github/workflows/tests.yml) tests Python 3.11/3.12 on Windows and Linux and checks JavaScript syntax. [See actual runs and results](https://github.com/VC-Anvil/agentrelay/actions/workflows/tests.yml); local and real-inference results are documented independently in the validation report.
 

@@ -17,6 +17,11 @@ of command arguments and configuration files.
 agentrelay serve --db /absolute/project/.agentrelay/workspace.sqlite --workers /absolute/workers.json
 ```
 
+For a provider-neutral walkthrough of the complete handoff, help, correction,
+review and backup lifecycle, run the deterministic local
+[handoff example](HANDOFF_EXAMPLE.md). Its fixture workers make no model, provider
+or network call.
+
 On Windows the launcher also accepts `-Workers` and `-Db`. Choose a queued, ready
 ticket with acceptance criteria and the matching profile. Click **Ejecutar tarea**.
 The **Ejecuciones** page shows actual process state and can cancel a running worker.
@@ -110,12 +115,19 @@ ticket application so retained output remains readable across supported runtimes
 ```
 
 Other outcomes: `help` requires `title`, `description`, optional `profile_id`;
-`split` requires 1–16 `children` with normal ticket fields; `blocked` uses `summary`
-as the reason. Unused `title`, `description`, `profile_id`, `children` may be omitted
-or null. `summary` is required and capped at 4096 characters. The worker must not
+`split` requires 1–16 `children`, each containing `title` and only the optional
+fields `description`, `profile_id` and `acceptance`; `blocked` uses `summary` as
+the reason. Split children inherit the parent's priority. Unused `title`,
+`description`, `profile_id`, `children` may be omitted or null. `summary` is
+required and capped at 4096 characters. The worker must not
 mutate its own claimed ticket through MCP while this result protocol is active;
 that changes its revision and deliberately causes a result conflict. Long-running
 external agents that need live checkpoints can use MCP directly instead.
+
+A worker can also retain an exact bounded `artifact_markdown` report in its run
+proposal. This supports review through `get_run_result` without opening a local
+artifact URI; it remains untrusted proposal text and requires independent review.
+See [inline reports](INLINE_REPORTS.md) for limits and legacy behavior.
 
 ## Failure, cancellation and recovery
 
