@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import re
 import sqlite3
 import sys
 import time
@@ -11,6 +12,44 @@ from .store import DomainError, Store
 
 
 BOOTSTRAP_ACTIONS = {"create_ticket", "create_plan", "create_profile"}
+SOURCE_SNAPSHOT_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
+
+
+def _source_identifier(value):
+    if not value or value != value.strip() or len(value) > 128:
+        raise argparse.ArgumentTypeError(
+            "must be 1..128 characters without surrounding whitespace")
+    return value
+
+
+def _source_positive_int(value):
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if not 1 <= number <= 2**63 - 1:
+        raise argparse.ArgumentTypeError("must be an integer from 1 to 2**63-1")
+    return number
+
+
+def _source_limit(value):
+    number = _source_positive_int(value)
+    if number > 100:
+        raise argparse.ArgumentTypeError("must be an integer from 1 to 100")
+    return number
+
+
+def _source_path(value):
+    if not value or "\x00" in value:
+        raise argparse.ArgumentTypeError("must be an explicit filesystem path")
+    return Path(value)
+
+
+def _source_snapshot_id(value):
+    if not SOURCE_SNAPSHOT_ID.fullmatch(value):
+        raise argparse.ArgumentTypeError(
+            "must be sha256: plus 64 lowercase hexadecimal characters")
+    return value
 
 
 def main():
@@ -35,9 +74,12 @@ def main():
     overview = sub.add_parser("overview", help="Read a bounded summary of configured projects")
     overview.add_argument("--workspaces", type=Path, required=True, help="Explicit trusted project registry")
     overview.add_argument("--limit", type=int, default=5, help="Tickets per category in each project (1..20)")
-    for name in ("serve", "mcp", "export", "run", "runs", "run-result", "backup", "action", "context", "history"):
+    for name in ("serve", "mcp", "export", "run", "runs", "run-result", "backup", "action",
+                 "context", "history", "check-sources", "source-checks", "source-check"):
         command = sub.add_parser(name)
-        command.add_argument("--db", type=Path, help="SQLite database shared by web and MCP")
+        command.add_argument("--db", type=Path, required=name in {
+            "check-sources", "source-checks", "source-check"
+        }, help="SQLite database shared by web and MCP")
         if name == "action":
             command.add_argument("--input", type=Path, required=True, help="UTF-8 JSON file containing action and data")
             command.add_argument("--actor", required=True, help="Audit identity; local declaration, not authentication")
@@ -53,6 +95,29 @@ def main():
         if name == "run-result":
             command.add_argument("--run", required=True, dest="run_id",
                                  help="Exact execution run ID")
+        if name == "check-sources":
+            command.add_argument("--ticket", required=True, dest="ticket_id",
+                                 type=_source_identifier,
+                                 help="Existing ticket receiving the advisory observation")
+            command.add_argument("--expected-revision", required=True, type=_source_positive_int)
+            command.add_argument("--snapshot", required=True, type=_source_path,
+                                 help="Explicit captured input directory")
+            command.add_argument("--expected-snapshot-id", required=True, type=_source_snapshot_id,
+                                 help="Exact lowercase sha256 snapshot identity")
+            command.add_argument("--root", required=True, type=_source_path,
+                                 help="Explicit current project root")
+            command.add_argument("--request-id", required=True, type=_source_identifier,
+                                 help="Stable ID for exact historical replay")
+            command.add_argument("--actor", required=True, type=_source_identifier,
+                                 help="Audit identity; local declaration, not authentication")
+        if name == "source-checks":
+            command.add_argument("--ticket", required=True, dest="ticket_id",
+                                 type=_source_identifier)
+            command.add_argument("--limit", type=_source_limit, default=20)
+            command.add_argument("--before-id", type=_source_positive_int,
+                                 help="Exclusive source-check ID cursor from the previous page")
+        if name == "source-check":
+            command.add_argument("--check-id", required=True, type=_source_positive_int)
         if name == "runs":
             command.add_argument("--ticket", dest="ticket_id", help="Optional exact ticket ID")
             command.add_argument("--status", help="Optional execution status")
@@ -146,7 +211,8 @@ def main():
     demo = getattr(args, "demo", False)
     database = args.db or Path.cwd() / ".agentrelay" / ("demo.sqlite" if demo else "workspace.sqlite")
     requires_existing = args.command in {
-        "context", "history", "export", "runs", "run-result", "backup", "run"
+        "context", "history", "export", "runs", "run-result", "backup", "run",
+        "check-sources", "source-checks", "source-check",
     } or (args.command == "action" and request["action"] not in BOOTSTRAP_ACTIONS)
     try:
         # Store/the read preflight inspect the selected path before resolving it, including symlinks.
@@ -159,7 +225,26 @@ def main():
             store.seed_demo()
     except (DomainError, OSError, RuntimeError, sqlite3.Error) as exc:
         parser.exit(1, f"Database: {exc}\n")
-    if args.command in {"action", "context", "history", "runs", "run-result"}:
+    if args.command in {"check-sources", "source-checks", "source-check"}:
+        try:
+            if args.command == "check-sources":
+                from .source_checks import check_sources
+                result = check_sources(
+                    store, ticket_id=args.ticket_id, expected_revision=args.expected_revision,
+                    snapshot=args.snapshot, expected_snapshot_id=args.expected_snapshot_id,
+                    root=args.root, request_id=args.request_id, actor=args.actor,
+                )
+            elif args.command == "source-checks":
+                from .source_checks import list_source_checks
+                result = list_source_checks(store, args.ticket_id, limit=args.limit,
+                                            before_id=args.before_id)
+            elif args.command == "source-check":
+                from .source_checks import get_source_check
+                result = get_source_check(store, args.check_id)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        except (DomainError, OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
+            parser.exit(1, f"{exc}\n")
+    elif args.command in {"action", "context", "history", "runs", "run-result"}:
         try:
             if args.command == "action":
                 result = store.action(request["action"], request["data"], args.actor)

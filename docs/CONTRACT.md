@@ -1,4 +1,4 @@
-# AgentRelay v0.13 contract
+# AgentRelay v0.14 contract
 
 Local-first ticket coordination for humans, external agents and explicitly configured workers. SQLite is authoritative. UI language Spanish; source/docs English. Default host 127.0.0.1:8787. Root owns integration, HTTP, MCP, adapters, docs and packaging; execution specialist owns execution.py/test_execution.py; frontend owner owns static/*.
 
@@ -8,7 +8,7 @@ Local-first ticket coordination for humans, external agents and explicitly confi
 - GET /api/tickets/{id}/context -> {ticket, parent, dependencies, children, events, instructions, profile, profiles}. Includes evidence/checkpoint, blocked readiness, recommended target profile (or null) and the profile catalog for help routing in the same read transaction. Recommendations are not execution attestations.
 - POST /api/actions -> {action: string, actor: string, data: object}; returns {result: object, state: State}. actor defaults human in UI. Action errors HTTP 400 (validation), 404, 409 (conflict). JSON error {error: string}. All mutations via this endpoint. UI sends expected_revision on update and lifecycle actions.
 - GET /api/export -> complete versioned JSON export.
-- GET /api/health -> {status: 'ok', version: '0.13.0'}.
+- GET /api/health -> {status: 'ok', version: '0.14.0'}.
 - GET /api/workspaces -> {workspaces:[{id,name,database,demo}],default_workspace_id}. Trusted startup registry only; no browser path input or registry mutation. Multi-project state/context/export/actions require X-AgentRelay-Workspace with a registered ID; missing is 400 and unknown is 404. Single-project requests remain compatible without it. State, context and HTTP export include workspace identity.
 - State also contains `demo`, `version`, and `execution: {enabled, workers, runs}`. Run and ticket statuses are read in one SQLite snapshot. Workers expose only id/name/model/effort/profile_ids/timeout_seconds. Run fields: id/ticket_id/worker_id/status/started_at/finished_at/summary/error/model/effort, newest 100.
 - POST actions `start_run {ticket_id,worker_id,expected_revision}` and `cancel_run {run_id}` require startup `--workers`. Normal result/state envelope applies. Execution protocol and failure statuses are in [EXECUTION.md](EXECUTION.md).
@@ -157,6 +157,26 @@ inspected is the path used for connections. Recognized legacy databases still
 receive normal migrations. This is neither database authentication nor protection
 against hostile concurrent filesystem replacement, and opening a valid project
 is not a filesystem-level read-only session. [Selection rules](DATABASES.md).
+
+`Store.context` also returns `source_checks` (the latest three compact receipts)
+and `source_checks_page: {total,count,limit:3,next_before_id}` in the same read
+transaction as the ticket. Context receipts add `ticket_revision_matches_now`;
+this compares ticket revisions only and does not attest current file contents.
+Source checks are historical advisory observations and never reopen, accept or
+execute work. Full per-file reports stay out of bulk state/export and worker
+context. SQLite backup preserves the complete history and reports.
+
+Local `check-sources` requires explicit existing `--db`, ticket/revision, snapshot,
+expected snapshot identity, current root, actor and request ID. It measures using
+the local comparison function, stores a bounded canonical UTF-8 report and its
+SHA-256, then records a compact event without changing ticket fields or revision.
+An exact request replay returns the original receipt before reading source paths;
+a new measurement needs a new ID. Its request namespace is shared with plans and
+scoped claims. Revision/collision failures insert nothing. Successful record or
+replay exits 0 regardless of advisory findings. CLI `source-checks` and
+`source-check` and MCP `list_source_checks` / `get_source_check` read stored data
+only. There is no HTTP/MCP write action that accepts a source path or report.
+See [full source-check contract](SOURCE_CHECKS.md).
 
 `Store(path)` initializes schema only, no demo by default. `state()`, `context(ticket_id)`, `export()`, `action(action, data, actor='human')`. `DomainError(message, status=400)` has .status. `seed_demo()` explicit idempotent method. Store connections per operation, concurrent safe. Standard-library only.
 

@@ -150,6 +150,24 @@ class Store:
                     request_id TEXT PRIMARY KEY, actor TEXT NOT NULL,
                     payload_hash TEXT NOT NULL, result TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS source_checks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    request_id TEXT NOT NULL UNIQUE,
+                    ticket_id TEXT NOT NULL REFERENCES tickets(id),
+                    ticket_revision INTEGER NOT NULL,
+                    actor TEXT NOT NULL,
+                    intent_json TEXT NOT NULL,
+                    intent_sha256 TEXT NOT NULL,
+                    snapshot_id TEXT NOT NULL,
+                    report_sha256 TEXT NOT NULL,
+                    report_json TEXT NOT NULL,
+                    summary_json TEXT NOT NULL,
+                    checked_at TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL,
+                    receipt_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS source_checks_ticket_id_id
+                    ON source_checks(ticket_id, id DESC);
             """)
             for row in DEFAULT_PROFILES:
                 db.execute("INSERT OR IGNORE INTO profiles VALUES (?,?,?,?,?,?,?,?,?)",
@@ -317,6 +335,12 @@ class Store:
                        "profile": next((p for p in profiles if p["id"] == ticket["profile_id"]), None),
                        "profiles": profiles,
                        "instructions": "Review acceptance, dependencies, checkpoint and evidence. Evidence references require independent verification. Record progress with checkpoint, then submit for review."}
+            from .source_checks import _page_in_tx
+            checks_page = _page_in_tx(db, ticket["id"], 3, current_revision=ticket["revision"])
+            context["source_checks"] = checks_page["checks"]
+            context["source_checks_page"] = {key: checks_page[key] for key in
+                                             ("total", "count", "limit", "next_before_id")}
+            context["instructions"] += " Source checks are historical advisory observations, not proof that files remain current."
             if page is not None:
                 context["events_page"] = {key: page[key] for key in ("total", "count", "limit", "next_before_id")}
             db.commit()
@@ -470,6 +494,8 @@ class Store:
             return json.loads(prior["result"])
         if db.execute("SELECT 1 FROM claim_requests WHERE request_id=?", (request_id,)).fetchone():
             raise DomainError("request_id already used by claim_next_ticket", 409)
+        if db.execute("SELECT 1 FROM source_checks WHERE request_id=?", (request_id,)).fetchone():
+            raise DomainError("request_id already used by check_sources", 409)
 
         allowed = EDITABLE | {"key", "parent_key", "depends_on_keys", "status"}
         keys = set()
@@ -662,6 +688,8 @@ class Store:
             return json.loads(prior["result"])
         if db.execute("SELECT 1 FROM plan_requests WHERE request_id=?", (request_id,)).fetchone():
             raise DomainError("request_id already used by create_plan", 409)
+        if db.execute("SELECT 1 FROM source_checks WHERE request_id=?", (request_id,)).fetchone():
+            raise DomainError("request_id already used by check_sources", 409)
         if actor != "human" and self._actor_identity(actor) != self._actor_identity(assignee):
             raise DomainError("agent actor must match assignee", 409)
 

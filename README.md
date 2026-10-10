@@ -6,7 +6,7 @@
 
 Turn goals into prioritized tickets, share durable context between agents, and keep delivery separate from acceptance. Humans use the web board; agents use the MCP server. Both operate on the same SQLite database.
 
-AgentRelay 0.13 combines a persistent ticket board, an MCP server and optional worker execution. Agents find work through filtered summaries and open current context with recent history; older audit events remain available by cursor. Register multiple local projects, inspect their priorities without starting workers, import complete plans without duplicates, capture exact review inputs and detect when those inputs change. Reserve one of several reviewed tickets by priority without duplicate claims after retries. Find a ticket's worker executions, recover a retained proposal after a conflict and review it against the current ticket without launching the worker again. Compare saved reports with their receipts before relying on their byte integrity. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
+AgentRelay 0.14 combines a persistent ticket board, an MCP server and optional worker execution. Agents find work through filtered summaries and open current context with recent history; older audit events remain available by cursor. Register multiple local projects, inspect their priorities without starting workers, import complete plans without duplicates, capture exact review inputs and detect when those inputs change. Reserve one of several reviewed tickets by priority without duplicate claims after retries. Find a ticket's worker executions, recover a retained proposal after a conflict and review it against the current ticket without launching the worker again. Compare saved reports with their receipts before relying on their byte integrity. Connect an existing agent or explicitly launch a configured Codex, Ollama or custom worker. Model recommendations stay separate from worker declarations; delivery always needs independent review.
 
 ![AgentRelay local board with explicitly fictional demo data](docs/preview.jpg)
 
@@ -52,6 +52,7 @@ Windows quick launch: `powershell -File .\Start-AgentRelay.ps1 -Demo`. It prefer
 - Codex CLI and Ollama text adapters, plus a provider-independent JSON worker protocol.
 - Bounded priority queue processing and online SQLite backup/restore.
 - Bounded input snapshots with SHA-256 verification, external artifact directories and a JSON action CLI for active-project pilots.
+- Historical source checks bind an explicit snapshot comparison to a ticket revision. Agents receive three compact recent observations and can inspect older checks or one exact saved report. [Source checks and limits](docs/SOURCE_CHECKS.md).
 - A trusted multi-project registry and explicit project selection for every browser request; matching ticket IDs in different databases stay separate.
 - `overview --workspaces /absolute/workspaces.json` summarizes priorities, review queues and blockers across registered projects without activating execution. [Overview contract and limits](docs/OVERVIEW.md).
 - Atomic, retry-safe plan imports with local forward references and backlog defaults, plus read-only comparison of captured inputs against current sources. [Usage and example](docs/PLANS_AND_FRESHNESS.md).
@@ -137,7 +138,7 @@ python -m unittest discover -s tests -v
 
 Install `.[mcp]` to include the real SDK stdio integration test; otherwise it is explicitly skipped. The tests use disposable databases, including a complete help → resume → independent review scenario. No LLM is called.
 
-The latest [database guard validation](docs/VALIDATION_0_13.md) covers startup, CLI use and persistence. The project also has earlier browser QA of the human workflow. See [validation](docs/VALIDATION.md), [architecture and boundaries](docs/ARCHITECTURE.md) and [API contract](docs/CONTRACT.md).
+The latest [source-check validation](docs/VALIDATION_0_14.md) covers historical observations, transport integration and real documentary pilots; [database guard validation](docs/VALIDATION_0_13.md) covers startup and persistence. The project also has earlier browser QA of the human workflow. See [validation](docs/VALIDATION.md), [architecture and boundaries](docs/ARCHITECTURE.md) and [API contract](docs/CONTRACT.md).
 
 The active [GitHub Actions workflow](.github/workflows/tests.yml) tests Python 3.11/3.12 on Windows and Linux and checks JavaScript syntax. [See actual runs and results](https://github.com/VC-Anvil/agentrelay/actions/workflows/tests.yml); local and real-inference results are documented independently in the validation report.
 

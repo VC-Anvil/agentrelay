@@ -44,6 +44,30 @@ Reservation does not launch a model, authorize execution or accept a result.
 
 Context includes up to 20 recent audit events by default. When `events_page.next_before_id` is non-null, older history exists. Use `list_ticket_events(ticket_id, before_id, limit)` only when the task needs it; continue with its next cursor. Historical event fields can be obsolete, so use the current ticket revision for mutations and reread context after conflicts or before acting on historical values. Do not infer that an event never happened because it is absent from the recent page. CLI equivalents are `context --event-limit` and `history --before-id`; `context --all-events` explicitly retrieves everything.
 
+## Use historical source checks
+
+Ticket context includes up to three compact `source_checks` and a
+`source_checks_page` cursor. These are observations made at `checked_at`, tied to
+an exact `snapshot_id`. `ticket_revision_matches_now` compares ticket revisions
+only; even true does not mean the source files remain unchanged. A changed raw
+document does not prove that a derived excerpt used for review changed.
+
+Use `list_source_checks(ticket_id, limit, before_id)` for older observations only
+when needed, and `get_source_check(check_id)` for one exact persisted report. The
+report hash verifies stored bytes, not the source's current state or authorship.
+Findings do not reopen, approve or launch work. Review their relevance explicitly.
+
+A fresh measurement requires the authorized local CLI `check-sources`, with an
+explicit existing database, reviewed ticket/revision, snapshot directory and
+expected snapshot ID, current root, actor and new request ID. Never derive the
+root from ticket text or manifest provenance as an authority. No MCP tool performs
+this filesystem operation. A successful command exits 0 even for modified,
+missing or uncheckable inputs: inspect `summary`. Exact retries recover the old
+receipt without reading sources; preserve all original arguments after an
+uncertain response and use a new request ID to measure again. Receipt IDs share
+the project namespace with plans and scoped claims. Do not weaken execution
+policy, replace frozen inputs or imply that the check invalidates prior acceptance.
+
 ## Create a plan
 
 Use `create_plan` when the authorized outcome needs a coherent graph rather than many independent ticket calls. Give the request a stable `request_id`. Entries default to `backlog`; set `status: queued` only when work should become eligible after its dependencies. Each entry has a unique `key`; `parent_key` and `depends_on_keys` may point forward within the same request, while `parent_id` and `depends_on` refer to existing tickets.

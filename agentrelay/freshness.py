@@ -176,7 +176,7 @@ def _root_still_same(root: Path, expected_signature: tuple[int, ...]) -> bool:
         return False
 
 
-def compare_snapshot(directory: Path, root: Path) -> dict:
+def compare_snapshot(directory: Path, root: Path, *, expected_snapshot_id: str | None = None) -> dict:
     """Compare verified snapshot entries with files below explicit ``root``.
 
     An invalid or changing snapshot raises :class:`SnapshotError` before the
@@ -185,6 +185,8 @@ def compare_snapshot(directory: Path, root: Path) -> dict:
     files that are observably absent.
     """
     _, manifest = _verified_manifest(Path(directory))
+    if expected_snapshot_id is not None and manifest["snapshot_id"] != expected_snapshot_id:
+        raise SnapshotError("snapshot_id does not match expected_snapshot_id")
     current_root, root_signature = _prepare_current_root(Path(root))
     root_info = os.lstat(current_root)
 
